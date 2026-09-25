@@ -89,7 +89,9 @@ Other checks:
 ## 3. Choose models and download them
 
 - **Pick the models.** Use the entries in `configs/models.yaml` whose `tiers`
-  include this machine's tier. For a first session, use the smallest
+  include this machine's tier. To benchmark a model that is not listed, add it
+  first following [docs/ADDING_MODELS.md](docs/ADDING_MODELS.md); never pass an
+  unlisted checkpoint through `--extra-serve-args`. For a first session, use the smallest
   tier-appropriate model plus one larger one. Confirm the list with the user.
 - **Download** each model online once, at its pinned revision. Get the exact
   commands with `python harness/run_suite.py --model <key> --platform <p> --print-download`. Gated Llama
