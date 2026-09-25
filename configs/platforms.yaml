@@ -8,6 +8,7 @@ vllm_version: "0.30.0"
 
 platforms:
   cuda:
+    # Multi-arch image: also runs on arm64 (NVIDIA DGX Spark / GB10).
     mode: gpu
     launch: docker
     image: vllm/vllm-openai:v0.30.0
@@ -29,12 +30,21 @@ platforms:
     serve_args: ["--dtype", "bfloat16"]
 
   rocm:
-    # Includes Strix Halo (gfx1151, ROCm >= 7.0.2 on the host).
+    # Radeon RX 7900 / PRO W7900 (gfx1100), RX 9070 / AI PRO R9700 (gfx1201),
+    # Strix Halo (gfx1151, ROCm >= 7.0.2 on the host).
     mode: gpu
     launch: docker
     image: vllm/vllm-openai-rocm:v0.30.0
     docker_args: ["--device", "/dev/kfd", "--device", "/dev/dri", "--group-add", "video",
                   "--ipc=host", "--security-opt", "seccomp=unconfined"]
+    serve_args: ["--gpu-memory-utilization", "0.90"]
+
+  xpu:
+    # Intel Arc / Arc Pro (Battlemage) discrete GPUs; amd64 only.
+    mode: gpu
+    launch: docker
+    image: vllm/vllm-openai-xpu:v0.30.0
+    docker_args: ["--device", "/dev/dri", "--ipc=host"]
     serve_args: ["--gpu-memory-utilization", "0.90"]
 
   openvino:
@@ -45,6 +55,8 @@ platforms:
     launch: external
 
   metal:
-    # Apple Silicon GPU via the vllm-metal plugin (MLX). Uses mlx-community checkpoints.
+    # Apple Silicon GPU via the vllm-metal plugin (tracks vLLM 0.30.0; macOS 15+).
+    # Serves each model's `mlx` checkpoint from models.yaml.
     mode: gpu
     launch: external
+    model_field: mlx

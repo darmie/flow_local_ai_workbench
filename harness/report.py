@@ -12,9 +12,12 @@ import statistics
 import sys
 from collections import defaultdict
 
-KEY = ["machine_id", "tier", "model", "quant", "platform", "mode", "engine_profile",
-       "target_condition", "scenario"]
-MACHINE_COLS = ["spec_machine_name", "spec_cpu_model", "spec_cpu_cores", "spec_cpu_isa", "spec_ram_gb",
+# Constraint settings (power source, offload, power cap) are part of the key so a
+# constrained run never merges with the unconstrained baseline.
+KEY = ["machine_id", "tier", "machine_class", "model", "quant", "platform", "mode", "engine_profile",
+       "power_source", "cpu_offload_gb", "gpu_power_limit_w", "target_condition", "scenario"]
+MACHINE_COLS = ["spec_machine_name", "spec_machine_class", "spec_form_factor", "spec_suggested_tier",
+                "spec_memory_kind", "spec_model_memory_gb", "spec_gpu_count", "spec_gpu_power_max", "spec_ecc_memory", "spec_cpu_model", "spec_cpu_cores", "spec_cpu_isa", "spec_ram_gb",
                 "spec_ram_desc", "spec_gpu", "spec_gpu_driver", "spec_gpu_power_limit", "spec_gpu_pcie",
                 "spec_os", "spec_kernel", "spec_power", "spec_power_profile", "spec_summary"]
 CAPACITY_GOODPUT = 0.9
@@ -151,7 +154,7 @@ def main():
     print(f"wrote {len(machines)} machines -> {mpath}", file=sys.stderr)
 
     if args.md:
-        mcols = ["machine_id", "tier", "spec_machine_name", "spec_cpu_model", "spec_cpu_cores", "spec_ram_gb",
+        mcols = ["machine_id", "tier", "spec_machine_class", "spec_machine_name", "spec_cpu_model", "spec_cpu_cores", "spec_ram_gb",
                  "spec_ram_desc", "spec_gpu", "spec_gpu_driver", "spec_os", "spec_power"]
         print("\n## Machines\n")
         print("| " + " | ".join(c.removeprefix("spec_") for c in mcols) + " |")

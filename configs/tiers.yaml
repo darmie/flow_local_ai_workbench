@@ -1,10 +1,16 @@
-# Hardware tiers from the research roadmap. The tier sets the concurrency sweep
-# and the prompt budget so a full suite finishes in a working day on that class
-# of machine. Declare your tier with BENCH_TIER or --tier.
+# Hardware tiers. A tier groups machines by how much model memory they have
+# (GPU VRAM, or unified memory on Apple Silicon / AMD Strix Halo / DGX Spark)
+# and sets the concurrency sweep and prompt budget so a full suite finishes in
+# a working day on that class of machine. Declare it with BENCH_TIER or --tier;
+# harness/fingerprint.py suggests one (spec.suggested_tier).
+#
+# members: examples only; the rule in `fits` decides.
 
 tiers:
   t1-minimal:
-    description: "Office laptop/desktop, CPU + iGPU, 16 GB shared RAM (e.g. Alder Lake + Iris Xe)"
+    description: "CPU + integrated graphics, up to 16 GB shared RAM"
+    fits: "no discrete GPU and no GPU-accelerated unified memory above 8 GB"
+    members: ["Intel Alder Lake / Raptor Lake laptop with Iris Xe", "AMD Ryzen APU laptop", "Apple M-series with 8 GB"]
     concurrency: [1, 2, 4]
     loaded_concurrency: [1, 2]
     min_prompts: 6
@@ -12,8 +18,10 @@ tiers:
     max_model_len: 8192
     cpu_kv_cache_gib: 2
 
-  t2-entry-dgpu:
-    description: "Discrete GPU with 8-16 GB VRAM (RTX 4060 / 4070 / 4070 Ti)"
+  t2-entry:
+    description: "8-16 GB VRAM, or 16-36 GB Apple unified memory"
+    fits: "one GPU with 8-16 GB VRAM, or Apple Silicon with 16-36 GB"
+    members: ["RTX 4060 / 4070 / 4070 Ti / 5060 Ti", "Intel Arc B580", "Apple M1-M5 / Pro with 16-36 GB (MacBook Air/Pro, Mac mini)"]
     concurrency: [1, 2, 4, 8, 16]
     loaded_concurrency: [1, 4]
     min_prompts: 16
@@ -22,7 +30,10 @@ tiers:
     cpu_kv_cache_gib: 4
 
   t3-pro:
-    description: "24 GB dGPU (RTX 4090) or UMA 48-128 GB (Apple M-series Pro/Max, Strix Halo)"
+    description: "20-32 GB VRAM, or 48-64 GB Apple unified memory"
+    fits: "one GPU with 20-32 GB VRAM, or Apple Silicon with 48-64 GB"
+    members: ["RTX 4090 / 5090", "RTX 4500 Ada / RTX 5000 Ada", "Radeon AI PRO R9700", "Intel Arc Pro B60",
+              "Apple M-series Pro / Max with 48-64 GB (MacBook Pro, Mac mini, Mac Studio)"]
     concurrency: [1, 2, 4, 8, 16, 32]
     loaded_concurrency: [1, 8]
     min_prompts: 32
@@ -30,8 +41,23 @@ tiers:
     max_model_len: 32768
     cpu_kv_cache_gib: 8
 
-  t4-multi-gpu:
-    description: "Multi-GPU server (e.g. 2x RTX 4090, PCIe or NVLink)"
+  t4-workstation:
+    description: "One accelerator with 48 GB+ VRAM, or 96 GB+ unified memory"
+    fits: "one GPU with 48 GB or more, or unified memory of 96 GB or more"
+    members: ["RTX 6000 Ada (48 GB)", "RTX PRO 6000 Blackwell (96 GB)", "Radeon PRO W7900 (48 GB)",
+              "AMD Ryzen AI Max / Strix Halo (128 GB)", "NVIDIA DGX Spark (128 GB)",
+              "Apple Mac Studio / MacBook Pro Max or Ultra with 96-512 GB"]
+    concurrency: [1, 2, 4, 8, 16, 32]
+    loaded_concurrency: [1, 8]
+    min_prompts: 32
+    prompts_per_slot: 4
+    max_model_len: 32768
+    cpu_kv_cache_gib: 16
+
+  t5-multi-gpu:
+    description: "Two or more discrete GPUs in one machine"
+    fits: "2+ discrete GPUs (PCIe or NVLink)"
+    members: ["2x RTX 4090 / 5090", "2x RTX 6000 Ada"]
     concurrency: [1, 2, 4, 8, 16, 32, 64]
     loaded_concurrency: [1, 16]
     min_prompts: 64

@@ -23,7 +23,8 @@ CONDITIONS = yaml.safe_load(open(os.path.join(HERE, "..", "configs", "conditions
 
 MANIFEST_KEYS = ["run_id", "machine_id", "tier", "model", "model_label", "quant", "params_b",
                  "platform", "mode", "engine_profile", "max_model_len", "vllm_version", "vllm_image",
-                 "harness_commit", "harness_dirty", "startup_s", "stress_ng"]
+                 "harness_commit", "harness_dirty", "startup_s", "stress_ng",
+                 "machine_class", "power_source", "cpu_offload_gb", "gpu_power_limit_w"]
 # Keys pulled from vLLM's result JSON if present (other numeric keys are ignored).
 BENCH_KEYS = [
     "completed", "failed", "duration", "total_input_tokens", "total_output_tokens",

@@ -44,7 +44,9 @@ Agentic workloads run through Garden and are covered in
 
 | Variable | Values | Where it is set |
 |---|---|---|
-| Hardware tier | `t1-minimal`, `t2-entry-dgpu`, `t3-pro`, `t4-multi-gpu` | `configs/tiers.yaml`, `--tier` |
+| Hardware tier | `t1-minimal`, `t2-entry`, `t3-pro`, `t4-workstation`, `t5-multi-gpu` | `configs/tiers.yaml`, `--tier` (§2.5) |
+| Machine class | `office-laptop`, `office-desktop`, `gaming-laptop`, `gaming-desktop`, `pro-laptop`, `pro-workstation`, `uma-workstation`, `apple`, `server` | detected (§2.5); `BENCH_MACHINE_CLASS` overrides |
+| Constraint | power source (AC / battery), GPU power cap, weights offloaded to system RAM | `--gpu-power-limit`, `--cpu-offload-gb`, unplugging (§2.6) |
 | Compute mode | `gpu` (CUDA / ROCm / Metal), `cpu`, `igpu` (OpenVINO on Iris Xe) | `--platform` (`configs/platforms.yaml`) |
 | Model + quantisation | e.g. `qwen3-8b-awq`, `llama3.2-3b` | `--model` (`configs/models.yaml`) |
 | Engine profile | `baseline`, `prefix-cache`, `fp8-kv`, `interactive`, `spec-ngram`, `spec-eagle3`, `agentic` | `--profile` (`configs/engine_profiles.yaml`) |
@@ -90,7 +92,7 @@ host is carrying the background load of normal use while it serves the model.
 
 - **GPU machines** run each model twice, keeping the model, scenarios and
   concurrency identical:
-  - the GPU arm (`--platform cuda|rocm|metal`);
+  - the GPU arm (`--platform cuda|rocm|xpu|metal`);
   - the CPU arm (`--platform cpu`), which runs the vLLM CPU image with
     `CUDA_VISIBLE_DEVICES=` so the GPU is invisible.
 - **Checkpoint choice.** Pick one that runs on both backends: bf16, AWQ, GPTQ or
@@ -100,6 +102,48 @@ host is carrying the background load of normal use while it serves the model.
 - **iGPU (Iris Xe).** It is reached only through the OpenVINO plugin, so on tier 1
   the comparison is `openvino` (`VLLM_OPENVINO_DEVICE=GPU`) vs `openvino`
   (`VLLM_OPENVINO_DEVICE=CPU`) vs `cpu` (stock vLLM).
+
+### 2.5 Tiers and machine classes
+
+Two labels describe a machine; both are in every result.
+
+- **Tier** = how much memory the model can live in. It decides which models a
+  machine runs and how far the concurrency sweep goes.
+- **Machine class** = what kind of machine it is, which decides its other
+  constraints: power and cooling on laptops, VRAM vs system RAM on gaming
+  desktops, ECC and power budget on workstations, shared bandwidth on
+  unified-memory machines.
+
+| Tier | Model memory | Examples |
+|---|---|---|
+| `t1-minimal` | No discrete GPU; up to 16 GB shared RAM | Iris Xe / Ryzen APU office laptops, 8 GB Apple M-series |
+| `t2-entry` | 8–16 GB VRAM, or 16–36 GB Apple unified | RTX 4060–4070 Ti / 5060 Ti (desktop or laptop), Arc B580, Apple M1–M5 / Pro up to 36 GB |
+| `t3-pro` | 20–32 GB VRAM, or 48–64 GB Apple unified | RTX 4090 / 5090, RTX 4500 / 5000 Ada, Radeon AI PRO R9700, Arc Pro B60, Apple Pro / Max 48–64 GB |
+| `t4-workstation` | One accelerator with 48 GB+ VRAM, or 96 GB+ unified | RTX 6000 Ada, RTX PRO 6000 Blackwell, Radeon PRO W7900, Strix Halo 128 GB, DGX Spark, Mac Studio Max / Ultra |
+| `t5-multi-gpu` | Two or more discrete GPUs | 2× RTX 4090 / 5090, 2× RTX 6000 Ada |
+
+`python harness/fingerprint.py` prints `spec.suggested_tier` and
+`spec.machine_class`, detected from GPU memory, unified-memory platforms
+(Apple Silicon, Ryzen AI Max, GB10), the SMBIOS chassis type, and pro vs
+consumer GPU lines, workstation CPUs and ECC memory. The operator confirms
+both. A VM is labelled `virtual` and should not be used for published numbers.
+
+Compare within a class first (gaming laptop vs gaming laptop), then across
+classes at the same tier: a gaming laptop and a gaming desktop with the same
+GPU name differ in power limit, clocks and cooling, which the fingerprint
+records (`gpu_power_limit`, `gpu_power_max`, PCIe link).
+
+### 2.6 Constraint tests
+
+Optional runs that each change one constraint on the same machine, compared
+with that machine's baseline. Each is part of the result key, so it never
+merges with the baseline.
+
+| Test | How | What it answers | Typical class |
+|---|---|---|---|
+| Model larger than VRAM | `--cpu-offload-gb N` (weights kept in system RAM, streamed over PCIe) | How far a 12–16 GB gaming GPU with 32–64 GB RAM can stretch, and how steep the PCIe cliff is | gaming desktop / laptop |
+| GPU power cap | `--gpu-power-limit W` (NVIDIA, needs `sudo -v` and the owner's approval; restored after the run) | Throughput per watt under a UPS or solar budget | gaming desktop, pro workstation |
+| On battery | Unplug and run with `--notes battery`; the fingerprint records the power source | How much a laptop slows down off mains, e.g. during load-shedding | any laptop |
 
 ---
 
@@ -206,11 +250,12 @@ from the same pinned snapshot, so runs stay offline.
 
 | Platform | Setup | Launch |
 |---|---|---|
-| `cuda` (RTX 40xx) | NVIDIA driver + NVIDIA Container Toolkit; `docker pull vllm/vllm-openai:v0.30.0` | managed by harness |
+| `cuda` (GeForce, RTX Ada / Blackwell pro cards, DGX Spark) | NVIDIA driver + NVIDIA Container Toolkit; `docker pull vllm/vllm-openai:v0.30.0` (amd64 and arm64) | managed by harness |
 | `cpu` (any x86-64, Linux) | Docker; `docker pull vllm/vllm-openai-cpu:v0.30.0-x86_64`. Prefer the image: the native CPU wheel needs glibc ≥ 2.39, `libnuma1`, tcmalloc and a CPU build of torch | managed by harness |
-| `rocm` (Strix Halo gfx1151, Radeon) | ROCm ≥ 7.0.2 on the host; `docker pull vllm/vllm-openai-rocm:v0.30.0` | managed by harness |
+| `rocm` (Radeon RX 7900 / 9070, Radeon PRO W7900, AI PRO R9700, Strix Halo) | ROCm ≥ 7.0.2 on the host; `docker pull vllm/vllm-openai-rocm:v0.30.0` | managed by harness |
+| `xpu` (Intel Arc B-series, Arc Pro B60) | Intel GPU driver; `docker pull vllm/vllm-openai-xpu:v0.30.0` | managed by harness |
 | `openvino` (Iris Xe / Intel CPU) | Build [vllm-openvino](https://github.com/vllm-project/vllm-openvino) in a venv (`VLLM_TARGET_DEVICE=empty pip install .`) | external: `VLLM_OPENVINO_DEVICE=GPU vllm serve <model> --port 8000 …` |
-| `metal` (Apple Silicon) | Install [vllm-metal](https://github.com/vllm-project/vllm-metal) (Homebrew tap) | external: `vllm serve mlx-community/<model> --port 8000 …` |
+| `metal` (Apple Silicon, macOS 15+) | Install [vllm-metal](https://github.com/vllm-project/vllm-metal) v0.30.0 (Homebrew tap). Serves each model's `mlx` 4-bit checkpoint from `models.yaml` | external: `vllm serve $(python harness/run_suite.py --model M --platform metal --print-serve-args)` |
 
 - **Windows machines:** run the harness inside WSL2 (the NVIDIA Container
   Toolkit and `nvidia-smi` work there; the CPU arm is Linux-only, so it also

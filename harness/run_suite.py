@@ -88,6 +88,8 @@ class Server:
             a += ["--tensor-parallel-size", str(self.args.tp)]
         if self.args.pp > 1:
             a += ["--pipeline-parallel-size", str(self.args.pp)]
+        if self.args.cpu_offload_gb:
+            a += ["--cpu-offload-gb", str(self.args.cpu_offload_gb)]
         return a + shlex.split(self.args.extra_serve_args)
 
     def start(self):
@@ -233,6 +235,25 @@ class Condition:
             self.proc = None
 
 
+class GpuPowerCap:
+    """Caps every NVIDIA GPU at `watts` (needs sudo) and restores the default limit."""
+
+    def __init__(self, watts):
+        out = subprocess.run(["nvidia-smi", "--query-gpu=power.default_limit", "--format=csv,noheader,nounits"],
+                             capture_output=True, text=True)
+        self.defaults = [float(x) for x in out.stdout.split()] if out.returncode == 0 else []
+        if not self.defaults:
+            sys.exit("--gpu-power-limit needs an NVIDIA GPU and nvidia-smi")
+        if subprocess.run(["sudo", "-n", "nvidia-smi", "-pl", str(watts)]).returncode != 0:
+            sys.exit("could not set the power limit; run `sudo -v` first (needs the owner's approval)")
+        log(f"GPU power limit set to {watts} W")
+
+    def restore(self):
+        for i, w in enumerate(self.defaults):
+            subprocess.run(["sudo", "-n", "nvidia-smi", "-i", str(i), "-pl", f"{w:g}"])
+        log("GPU power limit restored")
+
+
 class Probe:
     """Client for harness/probe.py running on the machine under test (LAN-client runs)."""
 
@@ -333,6 +354,10 @@ def main():
     ap.add_argument("--tp", type=int, default=1)
     ap.add_argument("--pp", type=int, default=1)
     ap.add_argument("--extra-serve-args", default="")
+    ap.add_argument("--cpu-offload-gb", type=float, default=0,
+                    help="constraint test: keep this many GB of weights in system RAM (model larger than VRAM)")
+    ap.add_argument("--gpu-power-limit", type=int, default=0,
+                    help="constraint test: cap NVIDIA GPU power (W) for the run via sudo nvidia-smi -pl; restored after")
     ap.add_argument("--base-url", default="", help="benchmark an already-running server")
     ap.add_argument("--probe", default="", help="harness/probe.py URL on the machine under test (LAN-client runs)")
     ap.add_argument("--client", choices=["local", "docker"], default="local" if shutil.which("vllm") else "docker")
@@ -354,7 +379,13 @@ def main():
     if not args.tier:
         sys.exit("set --tier or BENCH_TIER (see configs/tiers.yaml)")
 
-    tier, plat, model = tiers[args.tier], plats["platforms"][args.platform], models[args.model]
+    tier, plat, model = tiers[args.tier], plats["platforms"][args.platform], dict(models[args.model])
+    if plat.get("model_field"):
+        # Platforms with their own checkpoint format (Apple MLX) swap in that repo.
+        alt = model.get(plat["model_field"])
+        if not alt:
+            sys.exit(f"{args.model} has no `{plat['model_field']}` checkpoint for platform {args.platform}")
+        model.update(hf=alt["hf"], revision=alt.get("revision"), quant=f"{plat['model_field']}-4bit")
     profile = profiles[args.profile]
     if model.get("platforms") and args.platform not in model["platforms"]:
         sys.exit(f"{args.model} only runs on {model['platforms']}")
@@ -366,7 +397,7 @@ def main():
     if profile.get("needs_speculator") and not model.get("speculator"):
         sys.exit(f"{args.model} has no speculator in models.yaml; '{args.profile}' needs one")
     if args.print_download:
-        for repo in filter(None, [model, model.get("speculator")]):
+        for repo in filter(None, [model, model.get("speculator") if profile.get("needs_speculator") else None]):
             print(shlex.join(["hf", "download", repo["hf"]] + (["--revision", repo["revision"]] if repo.get("revision") else [])))
         return
     args.client_image = plat.get("image", "vllm/vllm-openai-cpu:v0.30.0-x86_64")
@@ -378,7 +409,11 @@ def main():
         return
 
     machine = os.environ.get("BENCH_MACHINE_ID", pyplatform.node())
-    run_id = f"{dt.datetime.now():%Y%m%d-%H%M%S}_{machine}_{args.model}_{args.platform}_{args.profile}"
+    constraint = "".join([f"_off{args.cpu_offload_gb:g}" if args.cpu_offload_gb else "",
+                          f"_pl{args.gpu_power_limit}" if args.gpu_power_limit else ""])
+    run_id = f"{dt.datetime.now():%Y%m%d-%H%M%S}_{machine}_{args.model}_{args.platform}_{args.profile}{constraint}"
+    if (args.cpu_offload_gb or args.gpu_power_limit) and plat["mode"] != "gpu":
+        sys.exit("--cpu-offload-gb and --gpu-power-limit apply to GPU platforms")
     run_dir = os.path.abspath(os.path.join(args.results, run_id))
     os.makedirs(run_dir)
     log(f"run dir: {run_dir}")
@@ -410,6 +445,8 @@ def main():
         "vllm_version": plats["vllm_version"], "vllm_image": "external" if args.base_url else plat.get("image", "external"),
         "harness_commit": fp["software"].get("harness_commit"),
         "harness_dirty": fp["software"].get("harness_dirty"),
+        "cpu_offload_gb": args.cpu_offload_gb or 0, "gpu_power_limit_w": args.gpu_power_limit or 0,
+        "power_source": fp["spec"].get("power", ""), "machine_class": fp["spec"].get("machine_class", ""),
         "max_model_len": args.max_model_len, "repeats": args.repeats,
         "client": "lan" if probe else args.client, "probe": args.probe or None,
         "stress_ng": bool(shutil.which("stress-ng")), "operator": os.environ.get("BENCH_OPERATOR", ""),
@@ -420,6 +457,7 @@ def main():
     def save():
         json.dump(manifest, open(mpath, "w"), indent=2, default=str)
 
+    power_cap = GpuPowerCap(args.gpu_power_limit) if args.gpu_power_limit else None
     server = Server(args, plat, model, profile, tier, run_dir)
     manifest["serve_cmd"] = server.cmd
     telemetry = None
@@ -532,6 +570,8 @@ def main():
             telemetry.wait(timeout=10)
         cond.exit()
         server.stop()
+        if power_cap:
+            power_cap.restore()
         save()
     log(f"done: {len(manifest['points'])} points -> {mpath}")
     log(f"aggregate with: python harness/summarize.py {args.results}")
