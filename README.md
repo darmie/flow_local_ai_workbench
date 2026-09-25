@@ -43,7 +43,7 @@ speed, GPU/VRAM, OS); see METHODOLOGY §6.5.
 | `harness/fingerprint.py` | Machine and software snapshot stored with every run |
 | `harness/summarize.py`, `harness/report.py` | Point-level CSV and headline table (capacity, energy, flags) |
 | `harness/garden_agentic.py` | Garden issue-run driver and scorer |
-| `tests/smoke.sh` | End-to-end harness test against a stub vLLM |
+| `tests/smoke.sh`, `tests/garden_smoke.sh` | End-to-end tests of the serving suite and the Garden runner against stubs |
 
 ## Issue tracking
 

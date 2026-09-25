@@ -139,7 +139,8 @@ def rocm():
     }
 
 
-def scrape_vllm(url):
+def scrape_raw(url):
+    """All Prometheus samples at `url`, summed over label sets, keyed by metric name."""
     if not url:
         return {}
     try:
@@ -153,6 +154,11 @@ def scrape_vllm(url):
         m = re.match(r"^([a-zA-Z_:][\w:]*)(\{[^}]*\})?\s+([-\d.eE+naN]+)", line)
         if m:
             sums[m.group(1)] = sums.get(m.group(1), 0.0) + float(m.group(3))
+    return sums
+
+
+def scrape_vllm(url):
+    sums = scrape_raw(url)
     out = {}
     for col, names in VLLM_METRICS.items():
         for n in names:

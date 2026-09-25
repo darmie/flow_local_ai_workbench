@@ -17,10 +17,11 @@ condition, at least 3 repeats, and raw data kept.
 |---|---|---|
 | Task success rate | Run status `succeeded` and every `expect` check passes | Can this model on this machine do the job? |
 | Wall time per task | Harness clock, from submit to terminal status | What the employee waits |
-| Model time vs tool time | `issue_run_event` `tool_finished.duration_ms` (tool); wall time minus tool time (model) | Where the time goes |
+| Model time vs tool time | Model: vLLM `/metrics` deltas over the run (at `--parallel 1`); tool: `issue_run_event` `tool_finished.duration_ms` | Where the time goes |
+| Model calls per task | vLLM `/metrics` deltas (`llm_calls`, `llm_mean_call_s`, `llm_mean_ttft_s`, `llm_queue_s`, `llm_prefix_hit_rate`) | How many LLM round-trips a task needs, and what each costs |
 | Steps, tool calls, tool errors | `issue_run.usage_json.step_count`, `issue_run_event` | Agent efficiency and robustness |
 | Input / output / cached tokens | `issue_run.usage_json` | Token cost of an agentic task (Phase 2 and 6 inputs) |
-| Server-side behaviour | `agentic_p<N>_telemetry.csv` (vLLM `/metrics` + host) | KV-cache pressure, prefix-cache hit rate, queueing, power |
+| Server-side behaviour | `agentic_<condition>_p<N>_telemetry.csv` (vLLM `/metrics` + host) | KV-cache pressure, prefix-cache hit rate, queueing, power |
 | Concurrency effect | `--parallel 1, 2, 4` | How the task experience degrades as more staff use the box |
 
 ## 2. Setup (once per machine)
@@ -92,33 +93,51 @@ RUN=results/$(date +%Y%m%d-%H%M%S)_${BENCH_MACHINE_ID}_qwen3-8b-awq_cuda_agentic
 python harness/garden_agentic.py --run-dir $RUN --parallel 1 --repeats 3
 python harness/garden_agentic.py --run-dir $RUN --parallel 2 --repeats 3
 python harness/garden_agentic.py --run-dir $RUN --parallel 4 --repeats 3   # tiers 2+
+# under host load, same rules as run_suite.py (METHODOLOGY §3):
+python harness/garden_agentic.py --run-dir $RUN --condition office [--no-topup]
 # with Garden in containers mode (pnpm dev:containers), also:
 python harness/garden_agentic.py --run-dir $RUN --with sandbox --only sandbox-sales-xlsx
 ```
 
+Before the batch, the harness brings the host to `--condition` exactly as
+`run_suite.py` does: measure, top up only the shortfall (unless `--no-topup`),
+verify. Garden's own processes (workerd, Postgres, Helix, Vite) are counted as
+part of the system under test, not as background load. After the batch, every
+run is labelled with the condition measured over its own time window
+(`measured_condition`).
+
 For each task × repeat, the harness:
 
-1. Creates an issue (status `todo`, no auto-start) assigned to the benchmark agent.
-2. Starts the run explicitly with `POST /api/issues/:id/runs`, so the start time
+1. Uploads the task's attachments (`configs/garden_fixtures/`) and lists their
+   ids in the issue body.
+2. Creates an issue (status `todo`, no auto-start) assigned to the benchmark agent.
+3. Starts the run explicitly with `POST /api/issues/:id/runs`, so the start time
    is under the harness's control.
-3. Polls until the run reaches a terminal status: `succeeded`, `failed`,
+4. Polls until the run reaches a terminal status: `succeeded`, `failed`,
    `cancelled` or `blocked`. Runs that stall (`waiting_for_input`,
    `waiting_for_approval`) or exceed the timeout are cancelled and scored as
    failures.
-4. Exports the `issue_run` and `issue_run_event` rows and the issue's work
-   products, then scores the run.
+5. Exports the `issue_run` and `issue_run_event` rows and the issue's work
+   products, takes the vLLM `/metrics` delta for the run, then scores it.
+
+At `--parallel 1` each run has the server to itself, so the `/metrics` delta is
+exactly that run's model calls and `model_time_source` is `vllm_metrics`. At
+higher parallelism concurrent runs share the counters, so per-run model time
+falls back to wall time minus tool time (`wall_minus_tools`); use the batch
+telemetry for server-side numbers.
+
+The harness signs in as the benchmark user and signs in again automatically
+if the session expires during a long batch.
 
 Outputs in `$RUN`:
 
 - `garden_runs.jsonl`: one record per run.
-- `agentic_p<N>.csv`: the summary.
-- `agentic_p<N>_telemetry.csv`: vLLM and host telemetry for the whole batch.
-- `agentic_p<N>_hostload.json`: the host condition at the start of the batch.
+- `agentic_<condition>_p<N>.csv`: the summary.
+- `agentic_<condition>_p<N>_telemetry.csv`: vLLM and host telemetry for the whole batch.
+- `agentic_<condition>_p<N>_meta.json`: the condition plan and the task list.
+- `hostload_<condition>.json`: the host measurement and top-up plan.
 
-The host condition rules from METHODOLOGY.md §3 apply unchanged. Run the quiet
-batch first. For loaded batches, run `harness/contention.py --plan <hostload json>`
-alongside, or rely on organic load, and label the batch with the measured
-class.
+Run the quiet batch first.
 
 ## 4. Task set
 
@@ -131,6 +150,7 @@ roadmap phase:
 | `extract-invoice` | extraction | Structured output from a document; exact values checked |
 | `summarize-policy` | long-context | Faithful summarisation; every number must survive |
 | `decompose-project` | multi-step | Several tool calls (child issues + checklist) |
+| `compare-quotes` | multi-document | Offline document RAG: three attached quotations read with `read_attachment`, totals computed and compared |
 | `swahili-reply`, `yoruba-classify` | multilingual | Phase 2 language handling on real agent turns |
 | `sandbox-sales-xlsx` | tool-use | Sandbox code execution + XLSX document skill (needs containers mode) |
 
@@ -152,16 +172,21 @@ first, to confirm the checks are not the thing failing.
   matters more here than in synthetic chat.
 - **Model time share** (model_time_s / wall_s) near 1 means the hardware is the
   bottleneck. A large tool-time share means the bottleneck is elsewhere.
+- **Model calls per task** × **mean call time** is the agentic cost of the
+  hardware: a model that needs more round-trips can lose to a slower one that
+  needs fewer.
 - **Cached input tokens** show how much the prefix cache is being used.
 
-## 6. Known limits of the current Garden integration
+## 6. Offline scope
 
-These limits apply to the Garden version this guide was written against:
+Garden in offline mode (`pnpm dev:offline`) covers every task except those
+marked `requires`:
 
-- Token usage is recorded per run, not per LLM call. Per-call latency goes only
-  to PostHog, so model time is inferred as wall time minus tool time.
-- The API accepts session cookies only, with no API keys, so the harness signs
-  in as the benchmark user.
-- Sandbox execution needs `pnpm dev:containers`, which is not fully offline.
-- Brain (knowledge-graph) embeddings always call Workers AI, so avoid tasks that
-  need Brain search in offline mode.
+- **Documents:** tasks attach text files and the agent reads them with
+  `read_attachment`, which works offline with any text model. PDFs and images
+  are passed to the model as file parts, which text-only local models cannot
+  read, so fixtures are text or Markdown.
+- **Sandbox:** code execution needs Garden's containers mode
+  (`pnpm dev:containers`), so sandbox tasks run only with `--with sandbox`.
+- **Brain:** Garden's knowledge-graph embeddings call Workers AI, so no task
+  uses Brain search; multi-document work goes through attachments instead.

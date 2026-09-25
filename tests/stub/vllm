@@ -15,10 +15,19 @@ import time
 def serve(argv):
     port = int(argv[argv.index("--port") + 1]) if "--port" in argv else 8000
 
+    t0 = time.time()
+
     class H(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
-            body = {"/health": b"", "/v1/models": b'{"data":[{"id":"stub"}]}',
-                    "/metrics": b"vllm:num_requests_running 0\nvllm:kv_cache_usage_perc 0.1\n"}.get(self.path)
+            # Counters grow with uptime so per-run deltas are non-zero.
+            n = int(time.time() - t0)
+            metrics = (f"vllm:num_requests_running 0\nvllm:kv_cache_usage_perc 0.1\n"
+                       f"vllm:request_success_total{{finished_reason=\"stop\"}} {n}\n"
+                       f"vllm:e2e_request_latency_seconds_sum {0.8 * n}\n"
+                       f"vllm:time_to_first_token_seconds_sum {0.1 * n}\n"
+                       f"vllm:time_to_first_token_seconds_count {n}\n"
+                       f"vllm:prompt_tokens_total {500 * n}\nvllm:generation_tokens_total {80 * n}\n").encode()
+            body = {"/health": b"", "/v1/models": b'{"data":[{"id":"stub"}]}', "/metrics": metrics}.get(self.path)
             self.send_response(200 if body is not None else 404)
             self.end_headers()
             self.wfile.write(body or b"")

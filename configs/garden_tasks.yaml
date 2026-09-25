@@ -6,6 +6,10 @@
 # Prompts forbid clarifying questions: `ask_question` parks the run in
 # waiting_for_input, which the harness scores as a failure.
 #
+# `attachments` are files under configs/garden_fixtures/ uploaded to the issue;
+# the agent reads them with read_attachment (text files work offline with any
+# model; Brain search is not used because its embeddings need Workers AI).
+#
 # `requires` lists Garden features beyond offline mode; such tasks run only
 # when passed via --with (e.g. --with sandbox).
 
@@ -90,6 +94,23 @@ tasks:
       tools_used: [create_child_issue, create_work_product]
       regex: ["FAQ", "(system prompt)", "(test|evaluat)"]
       max_steps: 16
+
+  - id: compare-quotes
+    category: multi-document
+    attachments:
+      - suppliers/supplier_a_lagos.md
+      - suppliers/supplier_b_abuja.md
+      - suppliers/supplier_c_accra.md
+    prompt: |
+      We need 500 double-wall cartons delivered to Lagos. Read the three attached
+      supplier quotations and write a report work product that gives the total
+      cost (cartons plus delivery) from each eligible supplier, says which
+      supplier is cheapest and what its payment terms are, and names any
+      supplier that cannot fill this order and why.
+    expect:
+      tools_used: [read_attachment, create_work_product]
+      regex: ["2,?175,?000", "2,?250,?000", "Zuma", "60 days", "(minimum|MOQ)[^\\n]{0,80}1,?000|1,?000[^\\n]{0,80}minimum"]
+      max_steps: 10
 
   - id: swahili-reply
     category: multilingual

@@ -372,7 +372,7 @@ specification from its runs' `fingerprint.json`:
 
 With `--md` it prints a **Machines** table ahead of the **Results** table.
 Share both together: a result without the machine's specification cannot be
-interpreted. Garden results (`agentic_p<N>.csv`) carry the same `machine_name`
+interpreted. Garden results (`agentic_<condition>_p<N>.csv`) carry the same `machine_name`
 and `machine_spec` columns.
 
 ### 6.6 SLOs per scenario

@@ -1,0 +1,23 @@
+#!/usr/bin/env python3
+"""Stub psql: answers garden_agentic.py's three queries from the Garden stub state."""
+import json
+import os
+import re
+import sys
+
+state = json.load(open(os.environ.get("GARDEN_STUB_STATE", "/tmp/garden_stub_state.json")))
+sql = sys.argv[sys.argv.index("-c") + 1]
+ident = re.search(r"'([0-9a-f-]{36})'", sql).group(1)
+if "from issue_run_event" in sql:
+    print(json.dumps([
+        {"seq": 1, "event_type": "issue_run:tool_finished", "payload": {"tool": "read_attachment", "ok": True, "duration_ms": 40}},
+        {"seq": 2, "event_type": "issue_run:tool_finished", "payload": {"tool": "create_work_product", "ok": True, "duration_ms": 60}},
+    ]))
+elif "from issue_run" in sql:
+    print(json.dumps({"id": ident, "status": "succeeded", "error": None, "result_json": {},
+                      "usage_json": {"input_tokens": 1200, "output_tokens": 300, "step_count": 3, "model": "stub"}}))
+elif "issue_work_product" in sql:
+    issue = state["issues"].get(ident, {})
+    ok = "attachment_id" in issue.get("description", "")
+    print(json.dumps([{"body": "Eko NGN 2,250,000; Zuma NGN 2,175,000 cheapest, 60 days. "
+                               "Coastline: minimum order 1,000." if ok else "no attachments seen"}]))

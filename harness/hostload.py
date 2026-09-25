@@ -23,7 +23,11 @@ import psutil
 import yaml
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-HARNESS_PAT = re.compile(r"vllm|run_suite\.py|telemetry\.py|hostload\.py|garden_agentic\.py", re.I)
+# BENCH_EXTRA_HARNESS_PROCS: extra regex of processes that are part of the system
+# under test (e.g. Garden's workerd/postgres) and so are not background load.
+HARNESS_PAT = re.compile("|".join(filter(None, [
+    r"vllm|run_suite\.py|telemetry\.py|hostload\.py|garden_agentic\.py",
+    os.environ.get("BENCH_EXTRA_HARNESS_PROCS", "")])), re.I)
 
 
 def is_harness(proc):
