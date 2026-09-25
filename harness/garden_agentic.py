@@ -193,6 +193,13 @@ def main():
 
     os.makedirs(args.run_dir, exist_ok=True)
     here = os.path.dirname(os.path.abspath(__file__))
+    fp_path = os.path.join(args.run_dir, "fingerprint.json")
+    if not os.path.exists(fp_path):
+        with open(fp_path, "w") as f:
+            subprocess.run([sys.executable, os.path.join(here, "fingerprint.py")], stdout=f, check=True)
+    fp = json.load(open(fp_path))
+    machine = {"machine_id": fp["machine_id"], "machine_name": fp["spec"]["machine_name"],
+               "machine_spec": fp["spec"]["summary"]}
     subprocess.run([sys.executable, os.path.join(here, "hostload.py"), "--target", "quiet", "--verify",
                     "--window", "10", "--out", os.path.join(args.run_dir, f"agentic_p{args.parallel}_hostload.json")])
     telemetry = None
@@ -213,6 +220,7 @@ def main():
                 res = {"task": tid, "repeat": r, "status": "harness_error", "success": False,
                        "error": str(e)}
             res["parallel"] = args.parallel
+            res.update(machine)
             results.append(res)
             log.write(json.dumps(res, default=str) + "\n")
             log.flush()
@@ -223,7 +231,7 @@ def main():
         telemetry.send_signal(signal.SIGINT)
         telemetry.wait(timeout=10)
 
-    fields = ["task", "category", "repeat", "parallel", "status", "success", "wall_s",
+    fields = ["machine_id", "machine_name", "machine_spec", "task", "category", "repeat", "parallel", "status", "success", "wall_s",
               "model_time_s", "tool_time_s", "steps", "tool_calls", "tool_errors",
               "input_tokens", "output_tokens", "cached_input_tokens", "reasoning_tokens",
               "t_submit", "t_done", "model", "run_id", "error"]

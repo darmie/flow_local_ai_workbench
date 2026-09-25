@@ -16,14 +16,18 @@ Halo. Agentic workloads are evaluated through
 python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
 tests/smoke.sh                                   # validate the harness (stub vLLM, ~4 min)
 
-export BENCH_TIER=t2-entry-dgpu BENCH_MACHINE_ID=<unique-name> BENCH_OPERATOR=<you>
+export BENCH_TIER=t2-entry-dgpu BENCH_MACHINE_ID=<unique-id> BENCH_OPERATOR=<you>
+export BENCH_MACHINE_NAME="<make and model>" BENCH_RAM_DESC="<e.g. DDR5-5600 dual-channel>"
 hf download Qwen/Qwen3-8B-AWQ                    # once, online
 python harness/run_suite.py --model qwen3-8b-awq --platform cuda                 # quiet, GPU
 python harness/run_suite.py --model qwen3-8b-awq --platform cuda --conditions office
 python harness/run_suite.py --model qwen3-8b-awq --platform cpu                  # without GPU
 python harness/summarize.py results/ -o results/summary.csv
-python harness/report.py results/summary.csv -o results/headline.csv --md
+python harness/report.py results/summary.csv -o results/headline.csv --md   # + results/machines.csv
 ```
+
+Reports name each machine and its specification (make/model, CPU, RAM type and
+speed, GPU/VRAM, OS); see METHODOLOGY §6.5.
 
 ## Layout
 

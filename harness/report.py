@@ -7,11 +7,15 @@ Usage: python harness/report.py results/summary.csv -o results/headline.csv [--m
 """
 import argparse
 import csv
+import os
 import statistics
 from collections import defaultdict
 
 KEY = ["machine_id", "tier", "model", "quant", "platform", "mode", "engine_profile",
        "target_condition", "scenario"]
+MACHINE_COLS = ["spec_machine_name", "spec_cpu_model", "spec_cpu_cores", "spec_cpu_isa", "spec_ram_gb",
+                "spec_ram_desc", "spec_gpu", "spec_gpu_driver", "spec_gpu_power_limit", "spec_gpu_pcie",
+                "spec_os", "spec_kernel", "spec_power", "spec_power_profile", "spec_summary"]
 CAPACITY_GOODPUT = 0.9
 UNSTABLE_COV = 0.10
 
@@ -39,7 +43,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("summary")
     ap.add_argument("-o", "--out", default="results/headline.csv")
-    ap.add_argument("--md", action="store_true", help="also print a markdown table")
+    ap.add_argument("--machines-out", help="machine spec table (default: machines.csv next to --out)")
+    ap.add_argument("--md", action="store_true", help="also print markdown tables")
     args = ap.parse_args()
 
     rows = [r for r in csv.DictReader(open(args.summary)) if r["point_status"] == "ok"]
@@ -62,6 +67,8 @@ def main():
         c1_cov = cov(c1, "output_throughput")
         out.append({
             **dict(zip(KEY, key)),
+            "machine_name": all_pts[0].get("spec_machine_name", ""),
+            "machine_spec": all_pts[0].get("spec_summary", ""),
             "repeats_c1": len(c1),
             "c1_ttft_p50_ms": med(c1, "median_ttft_ms"),
             "c1_ttft_p90_ms": med(c1, "p90_ttft_ms"),
@@ -92,8 +99,33 @@ def main():
         w.writeheader()
         w.writerows(out)
     print(f"wrote {len(out)} rows -> {args.out}")
+
+    # One row per machine; a machine_id whose spec changed between runs is
+    # reported so the operator can give the changed hardware a new id.
+    machines = {}
+    for r in rows:
+        spec = {c: r.get(c, "") for c in MACHINE_COLS}
+        prev = machines.setdefault(r["machine_id"], {"machine_id": r["machine_id"], "tier": r["tier"], **spec})
+        if prev["spec_summary"] != spec["spec_summary"]:
+            print(f"WARNING: {r['machine_id']} has differing specs across runs:\n  {prev['spec_summary']}\n"
+                  f"  {spec['spec_summary']}\n  use a new BENCH_MACHINE_ID after hardware changes")
+    mpath = args.machines_out or os.path.join(os.path.dirname(os.path.abspath(args.out)), "machines.csv")
+    with open(mpath, "w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=["machine_id", "tier"] + MACHINE_COLS)
+        w.writeheader()
+        w.writerows(machines.values())
+    print(f"wrote {len(machines)} machines -> {mpath}")
+
     if args.md:
-        cols = ["machine_id", "model", "platform", "target_condition", "scenario", "c1_ttft_p50_ms",
+        mcols = ["machine_id", "tier", "spec_machine_name", "spec_cpu_model", "spec_cpu_cores", "spec_ram_gb",
+                 "spec_ram_desc", "spec_gpu", "spec_gpu_driver", "spec_os", "spec_power"]
+        print("\n## Machines\n")
+        print("| " + " | ".join(c.removeprefix("spec_") for c in mcols) + " |")
+        print("|" + "---|" * len(mcols))
+        for m in machines.values():
+            print("| " + " | ".join(str(m.get(c, "")) for c in mcols) + " |")
+        print("\n## Results\n")
+        cols = ["machine_id", "machine_name", "model", "platform", "target_condition", "scenario", "c1_ttft_p50_ms",
                 "c1_tpot_p50_ms", "c1_output_tok_s", "capacity_users", "peak_output_tok_s",
                 "wh_per_1k_tok_at_capacity", "flag_unstable", "condition_match_rate"]
         print("| " + " | ".join(cols) + " |")

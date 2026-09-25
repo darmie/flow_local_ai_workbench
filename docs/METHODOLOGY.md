@@ -164,13 +164,27 @@ python3 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
 sudo apt install stress-ng        # optional; improves top-up precision (brew install stress-ng on macOS)
 export BENCH_TIER=t1-minimal      # your tier, see configs/tiers.yaml
-export BENCH_MACHINE_ID=ade-thinkpad-x1   # stable, unique name for this machine
+export BENCH_MACHINE_ID=ade-thinkpad-x1   # stable, unique id for this machine
+export BENCH_MACHINE_NAME="Lenovo ThinkPad X1 Carbon Gen 10"   # make and model, as shown in reports
+export BENCH_RAM_DESC="LPDDR5-5200 dual-channel"               # memory type, speed, channels
 export BENCH_OPERATOR=ade
 ```
 
-Run `sudo python harness/fingerprint.py` once. It records DIMM type and speed
-through `dmidecode`, which needs root. DDR4 vs DDR5 is a primary explanatory
-variable for tier 1, so this matters.
+Every report names the machine and its specification (§6.5). The harness
+detects the CPU, core count, RAM size, GPU, VRAM, driver, OS and power state
+itself. Two things need help:
+
+- **Make and model** come from DMI on Linux and `system_profiler` on macOS.
+  Virtual machines, WSL2 and some desktops report nothing useful, so set
+  `BENCH_MACHINE_NAME`.
+- **RAM type and speed** need root (`dmidecode`). Run
+  `sudo dmidecode -t memory | grep -E "Type:|Speed:"` once and put the answer in
+  `BENCH_RAM_DESC`. DDR4 vs DDR5, and single vs dual channel, largely explain
+  decode speed on tier 1, so don't skip this.
+
+Check the result with `python harness/fingerprint.py | grep -A16 '"spec"'`.
+If the hardware changes (RAM upgrade, GPU swap), give the machine a new
+`BENCH_MACHINE_ID`. The report warns when one id has shown two different specs.
 
 ### 4.2 Download models once (online), then run offline
 
@@ -325,7 +339,9 @@ kept in the result JSON.
 
 ### 6.4 Derived headline numbers (`harness/report.py`)
 
-One row per machine × model × platform × profile × condition × scenario:
+One row per machine × model × platform × profile × condition × scenario. Each
+row carries `machine_name` and `machine_spec`, a one-line summary of make and
+model, CPU and cores, RAM size and type, GPU and VRAM, and OS:
 
 - **Single-user experience:** median across repeats of TTFT p50/p90, TPOT p50
   and tokens/s at concurrency 1.
@@ -342,7 +358,24 @@ One row per machine × model × platform × profile × condition × scenario:
   - `flag_swapped`: swap was used.
   - `condition_match_rate`.
 
-### 6.5 SLOs per scenario
+### 6.5 Machine specification in reports
+
+`report.py` also writes `machines.csv`, one row per machine with the full
+specification from its runs' `fingerprint.json`:
+
+- make and model
+- CPU model, cores/threads and ISA extensions
+- RAM size, type and speed
+- GPU(s) with VRAM, driver/CUDA version, power limit and PCIe link
+- OS and kernel
+- power source and power profile
+
+With `--md` it prints a **Machines** table ahead of the **Results** table.
+Share both together: a result without the machine's specification cannot be
+interpreted. Garden results (`agentic_p<N>.csv`) carry the same `machine_name`
+and `machine_spec` columns.
+
+### 6.6 SLOs per scenario
 
 TPOT 150 ms is about 6–7 tokens/s, just above reading speed.
 
@@ -375,8 +408,8 @@ results/<YYYYmmdd-HHMMSS>_<machine>_<model>_<platform>_<profile>/
 
 - `results/` is git-ignored. Share a run by compressing its directory into the
   team's shared results store; never edit a run directory by hand.
-- `summary.csv` (one row per point) and `headline.csv` are always regenerated
-  from the raw directories.
+- `summary.csv` (one row per point, with every `spec_*` column), `headline.csv`
+  and `machines.csv` are always regenerated from the raw directories.
 - **Tokens are model-specific.** Throughput in tokens/s is comparable across
   machines for the *same model*. Across models with different tokenizers,
   compare task-level numbers (requests/s at SLO, Garden task time) instead. This

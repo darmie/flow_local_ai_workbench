@@ -36,6 +36,15 @@ BENCH_KEYS = [
 ]
 
 
+def load_spec(run_dir):
+    """Machine specification from the run's fingerprint, as spec_* columns."""
+    try:
+        fp = json.load(open(os.path.join(run_dir, "fingerprint.json")))
+    except (OSError, ValueError):
+        return {}
+    return {f"spec_{k}": v for k, v in fp.get("spec", {}).items()}
+
+
 def load_telemetry(path):
     if not os.path.exists(path):
         return []
@@ -124,12 +133,14 @@ def main():
             run_dir = os.path.dirname(manifest_path)
             manifest = json.load(open(manifest_path))
             tel = load_telemetry(os.path.join(run_dir, "telemetry.csv"))
+            spec = load_spec(run_dir)
             for point in manifest.get("points", []):
                 res_path = os.path.join(run_dir, point["result_file"])
                 if not os.path.exists(res_path):
                     continue
                 res = json.load(open(res_path))
                 row = {k: manifest.get(k, "") for k in MANIFEST_KEYS}
+                row.update(spec)
                 row.update({"target_condition": point["condition"], "scenario": point["scenario"],
                             "concurrency": point["concurrency"], "repeat": point["repeat"],
                             "num_prompts": point.get("num_prompts"),

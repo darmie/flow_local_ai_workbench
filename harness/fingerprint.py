@@ -127,6 +127,66 @@ def software():
     return sw
 
 
+def system_model():
+    """Vendor + product name of the machine (DMI on Linux, hw model on macOS)."""
+    if sys.platform == "darwin":
+        hw = sh("system_profiler SPHardwareDataType")
+        name = re.search(r"Model Name:\s*(.+)", hw)
+        ident = re.search(r"Model Identifier:\s*(.+)", hw)
+        return " ".join(m.group(1).strip() for m in (name, ident) if m)
+    parts = [read(f"/sys/class/dmi/id/{f}") for f in ("sys_vendor", "product_name", "product_version")]
+    parts = [p for p in parts if p and p.lower() not in ("to be filled by o.e.m.", "default string", "none")]
+    return " ".join(dict.fromkeys(parts))
+
+
+def spec(fp):
+    """Flat, human-readable specification used as report columns.
+
+    BENCH_MACHINE_NAME and BENCH_RAM_DESC override detection; set them when
+    DMI/dmidecode are unavailable (VMs, WSL2, no root).
+    """
+    cpu, mem = fp["cpu"], fp["memory"]
+    dimm = mem.get("dimm") if isinstance(mem.get("dimm"), dict) else {}
+    ram_desc = os.environ.get("BENCH_RAM_DESC") or " ".join(filter(None, [
+        "/".join(dimm.get("type", [])),
+        f"{'/'.join(dimm.get('speed_mts', []))} MT/s" if dimm.get("speed_mts") else "",
+        f"{dimm['populated_slots']} DIMM" if dimm.get("populated_slots") else "",
+    ])) or ("unified" if sys.platform == "darwin" else "(type unknown)")
+    gpus = []
+    for g in fp["gpus"]:
+        if g.get("vendor") == "nvidia":
+            gpus.append(f"{g['name']} {g['memory']}")
+        elif g.get("lspci"):
+            gpus += [re.sub(r"^\S+\s+(VGA compatible controller|3D controller|Display controller):\s*", "", l)
+                     for l in g["lspci"]]
+        elif g.get("vendor") == "amd":
+            gpus.append("AMD " + " ".join(g.get("rocm_smi", "").split()[-6:]))
+        elif g.get("vendor") == "apple":
+            cores = re.search(r"Total Number of Cores:\s*(\d+)", g.get("detail", ""))
+            gpus.append("Apple GPU" + (f" {cores.group(1)}-core" if cores else ""))
+    nv = next((g for g in fp["gpus"] if g.get("vendor") == "nvidia"), {})
+    out = {
+        "machine_name": os.environ.get("BENCH_MACHINE_NAME") or system_model() or fp["machine_id"],
+        "cpu_model": cpu.get("model", ""),
+        "cpu_cores": f"{cpu.get('physical_cores')}C/{cpu.get('logical_cores')}T",
+        "cpu_isa": " ".join(cpu.get("isa", [])),
+        "ram_gb": mem.get("total_gb"),
+        "ram_desc": ram_desc,
+        "gpu": "; ".join(gpus) or "none",
+        "gpu_driver": " ".join(filter(None, [nv.get("driver", ""), f"CUDA {nv['cuda']}" if nv.get("cuda") else ""])),
+        "gpu_power_limit": nv.get("power_limit", ""),
+        "gpu_pcie": nv.get("pcie", ""),
+        "os": fp["software"].get("distro") or fp["software"].get("os", ""),
+        "kernel": fp["software"].get("kernel", ""),
+        "power": "AC" if fp["power"].get("on_ac", True) else "battery",
+        "power_profile": fp["power"].get("power_profile") or cpu.get("governor", ""),
+    }
+    out["summary"] = " | ".join(str(x) for x in [
+        out["machine_name"], f"{out['cpu_model']} {out['cpu_cores']}",
+        f"{out['ram_gb']} GB {out['ram_desc']}", out["gpu"], out["os"]] if x)
+    return out
+
+
 def main():
     fp = {
         "machine_id": os.environ.get("BENCH_MACHINE_ID", platform.node()),
@@ -139,6 +199,7 @@ def main():
         "software": software(),
         "boot_time": psutil.boot_time(),
     }
+    fp["spec"] = spec(fp)
     json.dump(fp, sys.stdout, indent=2, default=str)
     print()
 
