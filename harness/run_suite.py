@@ -494,7 +494,7 @@ def main():
         for repo in filter(None, [model, model.get("speculator") if profile.get("needs_speculator") else None]):
             print(shlex.join(["hf", "download", repo["hf"]] + (["--revision", repo["revision"]] if repo.get("revision") else [])))
         return
-    args.client_image = plat.get("image", "vllm/vllm-openai-cpu:v0.30.0-x86_64")
+    args.client_image = plat.get("image", "vllm/vllm-openai-cpu:v0.30.0")
     if plat.get("launch") == "external" and args.client == "docker":
         args.client_image = plats["platforms"]["cpu"]["image"]
 

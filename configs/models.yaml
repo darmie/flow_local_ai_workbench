@@ -22,7 +22,7 @@ models:
     gated: true
     quant: bf16
     params_b: 3.2
-    tiers: [t1-minimal, t2-entry]
+    tiers: [t1-minimal, t2-integrated, t3-entry]
     tool_call_parser: llama3_json
 
   llama3.2-3b-w8a8:
@@ -30,7 +30,7 @@ models:
     revision: 505dad2e5ceed6c787249c634a05f2d6cf8ad9e4
     quant: int8-w8a8
     params_b: 3.2
-    tiers: [t1-minimal]
+    tiers: [t1-minimal, t2-integrated]
     tool_call_parser: llama3_json
 
   phi4-mini-ov:
@@ -39,7 +39,7 @@ models:
     revision: e5813af02e8560a9186c41f932f21cbb584a0907
     quant: int4-ov
     params_b: 3.8
-    tiers: [t1-minimal]
+    tiers: [t1-minimal, t2-integrated]
     platforms: [openvino]
 
   phi4-mini-w4a16:
@@ -49,7 +49,7 @@ models:
     mlx: {hf: mlx-community/Phi-4-mini-instruct-4bit, revision: ac1c269cb4222a4e136a3d09edad301056c1f36a}
     quant: w4a16
     params_b: 3.8
-    tiers: [t1-minimal, t2-entry]
+    tiers: [t1-minimal, t2-integrated, t3-entry]
     status: experimental
 
   # --- African-language model (Phase 2) ------------------------------------
@@ -63,7 +63,7 @@ models:
     params_b: 0.4
     max_model_len: 2048
     chat_template: false
-    tiers: [t1-minimal, t2-entry]
+    tiers: [t1-minimal, t2-integrated, t3-entry]
 
   # --- 7-8B: entry dGPU -----------------------------------------------------
   mistral7b-v0.3-w4a16:
@@ -72,7 +72,7 @@ models:
     mlx: {hf: mlx-community/Mistral-7B-Instruct-v0.3-4bit, revision: a4b8f870474b0eb527f466a03fbc187830d271f5}
     quant: gptq-w4
     params_b: 7.2
-    tiers: [t1-minimal, t2-entry]
+    tiers: [t1-minimal, t2-integrated, t3-entry]
     tool_call_parser: mistral
 
   llama3.1-8b-w4a16:
@@ -81,7 +81,7 @@ models:
     mlx: {hf: mlx-community/Meta-Llama-3.1-8B-Instruct-4bit, revision: 241a666dad6cb93c8ff213d39a7f34a36bf26db4}
     quant: w4a16
     params_b: 8.0
-    tiers: [t1-minimal, t2-entry]
+    tiers: [t1-minimal, t2-integrated, t3-entry]
     tool_call_parser: llama3_json
     speculator: {hf: RedHatAI/Llama-3.1-8B-Instruct-speculator.eagle3,
                  revision: f4fa34a8f803a0ba75d048d6b3dbc1ad5149e9ac}
@@ -91,7 +91,7 @@ models:
     revision: 024e24cbe4153670f747383ea3265d0fb197c727
     quant: int8-w8a8
     params_b: 8.0
-    tiers: [t1-minimal, t2-entry]
+    tiers: [t1-minimal, t2-integrated, t3-entry]
     tool_call_parser: llama3_json
     speculator: {hf: RedHatAI/Llama-3.1-8B-Instruct-speculator.eagle3,
                  revision: f4fa34a8f803a0ba75d048d6b3dbc1ad5149e9ac}
@@ -102,7 +102,7 @@ models:
     mlx: {hf: mlx-community/Qwen3-8B-4bit, revision: 545dc4251c05440727734bcd94334791f6ab0192}
     quant: awq
     params_b: 8.2
-    tiers: [t1-minimal, t2-entry]
+    tiers: [t1-minimal, t2-integrated, t3-entry]
     tool_call_parser: hermes
     reasoning_parser: qwen3
     speculator: {hf: RedHatAI/Qwen3-8B-speculator.eagle3,
@@ -116,7 +116,7 @@ models:
     mlx: {hf: mlx-community/gemma-3-12b-it-4bit, revision: 86cc6a8dedbc456dd0e4af01a9d09f396f77e558}
     quant: w4a16
     params_b: 12.2
-    tiers: [t2-entry, t3-pro]
+    tiers: [t2-integrated, t3-entry, t4-pro]
     serve_args: ["--limit-mm-per-prompt", '{"image": 0}']
 
   qwen2.5-14b-awq:
@@ -125,7 +125,7 @@ models:
     mlx: {hf: mlx-community/Qwen2.5-14B-Instruct-4bit, revision: dad510143ae5cdb1466778bde3161460f9e9f604}
     quant: awq
     params_b: 14.8
-    tiers: [t2-entry, t3-pro]
+    tiers: [t2-integrated, t3-entry, t4-pro]
     tool_call_parser: hermes
 
   qwen3-14b-awq:
@@ -134,7 +134,7 @@ models:
     mlx: {hf: mlx-community/Qwen3-14B-4bit, revision: a4d9b2df59d2c150bef02fcbe0d91046b7ca33a4}
     quant: awq
     params_b: 14.8
-    tiers: [t2-entry, t3-pro]
+    tiers: [t2-integrated, t3-entry, t4-pro]
     tool_call_parser: hermes
     reasoning_parser: qwen3
     speculator: {hf: RedHatAI/Qwen3-14B-speculator.eagle3,
@@ -147,7 +147,7 @@ models:
     mlx: {hf: mlx-community/Qwen2.5-32B-Instruct-4bit, revision: 2938092373e5f97b95538884112085364c2da315}
     quant: awq
     params_b: 32.8
-    tiers: [t3-pro, t4-workstation, t5-multi-gpu]
+    tiers: [t4-pro, t5-workstation, t6-multi-gpu]
     tool_call_parser: hermes
 
   qwen3-32b-awq:
@@ -156,7 +156,7 @@ models:
     mlx: {hf: mlx-community/Qwen3-32B-4bit, revision: bcaaf7f538adf166c1080a2befdb4f6019f66639}
     quant: awq
     params_b: 32.8
-    tiers: [t3-pro, t4-workstation, t5-multi-gpu]
+    tiers: [t4-pro, t5-workstation, t6-multi-gpu]
     tool_call_parser: hermes
     reasoning_parser: qwen3
     speculator: {hf: RedHatAI/Qwen3-32B-speculator.eagle3,
@@ -168,7 +168,7 @@ models:
     mlx: {hf: mlx-community/DeepSeek-R1-Distill-Qwen-32B-4bit, revision: 4e0d3848a0ad8f9fb54638891e4928f04fcca978}
     quant: w4a16
     params_b: 32.8
-    tiers: [t3-pro, t4-workstation, t5-multi-gpu]
+    tiers: [t4-pro, t5-workstation, t6-multi-gpu]
     reasoning_parser: deepseek_r1
 
   # --- 70B+: workstation (48 GB+ / large unified memory) and multi-GPU --------------------------------------
@@ -178,7 +178,7 @@ models:
     mlx: {hf: mlx-community/Llama-3.3-70B-Instruct-4bit, revision: de2dfaf56839b7d0e834157d2401dee02726874d}
     quant: w4a16
     params_b: 70.6
-    tiers: [t4-workstation, t5-multi-gpu]
+    tiers: [t5-workstation, t6-multi-gpu]
     tool_call_parser: llama3_json
     speculator: {hf: RedHatAI/Llama-3.3-70B-Instruct-speculator.eagle3,
                  revision: 42864f78d503693ae5fd317419f099ab3b7c13e4}
@@ -189,5 +189,5 @@ models:
     mlx: {hf: mlx-community/Qwen2.5-72B-Instruct-4bit, revision: 36a74b07390031bb18c9f12fb7c06699bc6273c4}
     quant: awq
     params_b: 72.7
-    tiers: [t4-workstation, t5-multi-gpu]
+    tiers: [t5-workstation, t6-multi-gpu]
     tool_call_parser: hermes

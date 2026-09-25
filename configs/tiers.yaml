@@ -8,9 +8,9 @@
 
 tiers:
   t1-minimal:
-    description: "CPU + integrated graphics, up to 16 GB shared RAM"
-    fits: "no discrete GPU and no GPU-accelerated unified memory above 8 GB"
-    members: ["Intel Alder Lake / Raptor Lake laptop with Iris Xe", "AMD Ryzen APU laptop", "Apple M-series with 8 GB"]
+    description: "Basic office machine: CPU + older integrated graphics, up to 16 GB"
+    fits: "no discrete GPU, not an AI-PC generation CPU; or any machine with less than 12 GB"
+    members: ["Intel Alder Lake / Raptor Lake laptop with Iris Xe", "AMD Ryzen 5000/7000 APU laptop", "Apple M-series with 8 GB"]
     concurrency: [1, 2, 4]
     loaded_concurrency: [1, 2]
     min_prompts: 6
@@ -18,10 +18,22 @@ tiers:
     max_model_len: 8192
     cpu_kv_cache_gib: 2
 
-  t2-entry:
-    description: "8-16 GB VRAM, or 16-36 GB Apple unified memory"
-    fits: "one GPU with 8-16 GB VRAM, or Apple Silicon with 16-36 GB"
-    members: ["RTX 4060 / 4070 / 4070 Ti / 5060 Ti", "Intel Arc B580", "Apple M1-M5 / Pro with 16-36 GB (MacBook Air/Pro, Mac mini)"]
+  t2-integrated:
+    description: "Mainstream pro laptop/desktop without a discrete GPU: modern integrated GPU + NPU, 16-36 GB"
+    fits: "no discrete GPU; AI-PC generation CPU (Core Ultra, Ryzen AI, Snapdragon X) or Apple M-series; 12-43 GB"
+    members: ["Intel Core Ultra (Meteor / Lunar / Arrow Lake) with Arc graphics", "AMD Ryzen AI 300 with Radeon 880M/890M",
+              "Qualcomm Snapdragon X Elite / Plus", "Apple MacBook Air / Pro, Mac mini with 16-36 GB"]
+    concurrency: [1, 2, 4, 8]
+    loaded_concurrency: [1, 2]
+    min_prompts: 8
+    prompts_per_slot: 3
+    max_model_len: 16384
+    cpu_kv_cache_gib: 4
+
+  t3-entry:
+    description: "Discrete GPU with 8-16 GB VRAM"
+    fits: "one GPU with 8-16 GB VRAM"
+    members: ["RTX 4060 / 4070 / 4070 Ti / 5060 Ti / 5070 (desktop or laptop)", "Radeon RX 7600 XT / 7800 XT / 9070", "Intel Arc B580"]
     concurrency: [1, 2, 4, 8, 16]
     loaded_concurrency: [1, 4]
     min_prompts: 16
@@ -29,9 +41,9 @@ tiers:
     max_model_len: 16384
     cpu_kv_cache_gib: 4
 
-  t3-pro:
-    description: "20-32 GB VRAM, or 48-64 GB Apple unified memory"
-    fits: "one GPU with 20-32 GB VRAM, or Apple Silicon with 48-64 GB"
+  t4-pro:
+    description: "20-32 GB VRAM, or 44-89 GB unified memory"
+    fits: "one GPU with 20-32 GB VRAM, or Apple Silicon / Strix Halo with 44-89 GB"
     members: ["RTX 4090 / 5090", "RTX 4500 Ada / RTX 5000 Ada", "Radeon AI PRO R9700", "Intel Arc Pro B60",
               "Apple M-series Pro / Max with 48-64 GB (MacBook Pro, Mac mini, Mac Studio)"]
     concurrency: [1, 2, 4, 8, 16, 32]
@@ -41,7 +53,7 @@ tiers:
     max_model_len: 32768
     cpu_kv_cache_gib: 8
 
-  t4-workstation:
+  t5-workstation:
     description: "One accelerator with 48 GB+ VRAM, or 96 GB+ unified memory"
     fits: "one GPU with 48 GB or more, or unified memory of 96 GB or more"
     members: ["RTX 6000 Ada (48 GB)", "RTX PRO 6000 Blackwell (96 GB)", "Radeon PRO W7900 (48 GB)",
@@ -54,7 +66,7 @@ tiers:
     max_model_len: 32768
     cpu_kv_cache_gib: 16
 
-  t5-multi-gpu:
+  t6-multi-gpu:
     description: "Two or more discrete GPUs in one machine"
     fits: "2+ discrete GPUs (PCIe or NVLink)"
     members: ["2x RTX 4090 / 5090", "2x RTX 6000 Ada"]

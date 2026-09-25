@@ -272,17 +272,20 @@ def accelerator(fp):
     return "shared", ram, 0
 
 
-def suggest_tier(kind, mem_gb, n_gpu):
+AI_PC_CPU = re.compile(r"Core\(TM\) Ultra|Core Ultra|Ryzen AI|Snapdragon|\bX1[EP]\b", re.I)
+
+
+def suggest_tier(kind, mem_gb, n_gpu, cpu_model=""):
     """Tier rule from configs/tiers.yaml (`fits`)."""
     if n_gpu >= 2:
-        return "t5-multi-gpu"
+        return "t6-multi-gpu"
+    if kind == "discrete" and mem_gb >= 7.5:
+        return "t5-workstation" if mem_gb >= 44 else "t4-pro" if mem_gb >= 19 else "t3-entry"
     if kind == "unified":
-        return ("t4-workstation" if mem_gb >= 90 else "t3-pro" if mem_gb >= 44
-                else "t2-entry" if mem_gb >= 15 else "t1-minimal")
-    if kind == "discrete":
-        return ("t4-workstation" if mem_gb >= 44 else "t3-pro" if mem_gb >= 19
-                else "t2-entry" if mem_gb >= 7.5 else "t1-minimal")
-    return "t1-minimal"
+        return ("t5-workstation" if mem_gb >= 90 else "t4-pro" if mem_gb >= 44
+                else "t2-integrated" if mem_gb >= 12 else "t1-minimal")
+    # No usable discrete GPU: modern integrated GPU + NPU machines vs basic office machines.
+    return "t2-integrated" if AI_PC_CPU.search(cpu_model) and mem_gb >= 12 else "t1-minimal"
 
 
 def spec(fp):
@@ -338,7 +341,9 @@ def spec(fp):
     out["ecc_memory"] = bool(fp["memory"].get("ecc"))
     out["memory_kind"] = kind
     out["model_memory_gb"] = mem_gb
-    out["suggested_tier"] = suggest_tier(kind, mem_gb, n_gpu)
+    if kind == "discrete" and mem_gb < 7.5:
+        kind, mem_gb = "shared", fp["memory"].get("total_gb") or 0
+    out["suggested_tier"] = suggest_tier(kind, mem_gb, n_gpu, fp["cpu"].get("model", ""))
     if kind == "unified" and out["ram_desc"] in ("(type unknown)", "unified"):
         out["ram_desc"] = "unified"
     out["summary"] = " | ".join(str(x) for x in [

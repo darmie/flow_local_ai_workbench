@@ -51,26 +51,32 @@ def _nv(name, mib):
 
 class TierTest(unittest.TestCase):
     def tier(self, fp):
-        return suggest_tier(*accelerator(fp))
+        return suggest_tier(*accelerator(fp), fp["cpu"]["model"])
 
     def test_discrete(self):
-        self.assertEqual(self.tier(_fp(gpus=[_nv("RTX 4060", 8188)])), "t2-entry")
-        self.assertEqual(self.tier(_fp(gpus=[_nv("RTX 5090", 32607)])), "t3-pro")
-        self.assertEqual(self.tier(_fp(gpus=[_nv("RTX 6000 Ada", 49140)])), "t4-workstation")
-        self.assertEqual(self.tier(_fp(gpus=[_nv("RTX 4090", 24564)] * 2)), "t5-multi-gpu")
+        self.assertEqual(self.tier(_fp(gpus=[_nv("RTX 4060", 8188)])), "t3-entry")
+        self.assertEqual(self.tier(_fp(gpus=[_nv("RTX 5090", 32607)])), "t4-pro")
+        self.assertEqual(self.tier(_fp(gpus=[_nv("RTX 6000 Ada", 49140)])), "t5-workstation")
+        self.assertEqual(self.tier(_fp(gpus=[_nv("RTX 4090", 24564)] * 2)), "t6-multi-gpu")
 
     def test_unified(self):
         mac = dict(arch="arm64", os_name="macOS-15.5-arm64-arm-64bit")
         self.assertEqual(self.tier(_fp(ram=8, **mac)), "t1-minimal")
-        self.assertEqual(self.tier(_fp(ram=24, **mac)), "t2-entry")
-        self.assertEqual(self.tier(_fp(ram=48, **mac)), "t3-pro")
-        self.assertEqual(self.tier(_fp(ram=128, **mac)), "t4-workstation")
-        self.assertEqual(self.tier(_fp(cpu="AMD RYZEN AI MAX+ 395", ram=124)), "t4-workstation")
+        self.assertEqual(self.tier(_fp(ram=16, **mac)), "t2-integrated")
+        self.assertEqual(self.tier(_fp(ram=24, **mac)), "t2-integrated")
+        self.assertEqual(self.tier(_fp(ram=48, **mac)), "t4-pro")
+        self.assertEqual(self.tier(_fp(ram=128, **mac)), "t5-workstation")
+        self.assertEqual(self.tier(_fp(cpu="AMD RYZEN AI MAX+ 395", ram=124)), "t5-workstation")
         self.assertEqual(self.tier(_fp(ram=119, gpus=[{"vendor": "nvidia", "name": "NVIDIA GB10", "memory": "[N/A]"}])),
-                         "t4-workstation")
+                         "t5-workstation")
 
-    def test_cpu_only(self):
+    def test_integrated(self):
         self.assertEqual(self.tier(_fp()), "t1-minimal")
+        self.assertEqual(self.tier(_fp(cpu="12th Gen Intel(R) Core(TM) i7-1255U", ram=16)), "t1-minimal")
+        self.assertEqual(self.tier(_fp(cpu="Intel(R) Core(TM) Ultra 7 258V", ram=32)), "t2-integrated")
+        self.assertEqual(self.tier(_fp(cpu="AMD Ryzen AI 9 HX 370 w/ Radeon 890M", ram=32)), "t2-integrated")
+        self.assertEqual(self.tier(_fp(cpu="Snapdragon(R) X Elite - X1E78100", arch="aarch64", ram=16)), "t2-integrated")
+        self.assertEqual(self.tier(_fp(cpu="Intel(R) Core(TM) Ultra 5 125U", ram=8)), "t1-minimal")
 
 
 class MachineClassTest(unittest.TestCase):

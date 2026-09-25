@@ -44,7 +44,7 @@ Agentic workloads run through Garden and are covered in
 
 | Variable | Values | Where it is set |
 |---|---|---|
-| Hardware tier | `t1-minimal`, `t2-entry`, `t3-pro`, `t4-workstation`, `t5-multi-gpu` | `configs/tiers.yaml`, `--tier` (§2.5) |
+| Hardware tier | `t1-minimal`, `t2-integrated`, `t3-entry`, `t4-pro`, `t5-workstation`, `t6-multi-gpu` | `configs/tiers.yaml`, `--tier` (§2.5) |
 | Machine class | `office-laptop`, `office-desktop`, `gaming-laptop`, `gaming-desktop`, `pro-laptop`, `pro-workstation`, `uma-workstation`, `apple`, `server` | detected (§2.5); `BENCH_MACHINE_CLASS` overrides |
 | Constraint | power source (AC / battery), GPU power cap, weights offloaded to system RAM | `--gpu-power-limit`, `--cpu-offload-gb`, unplugging (§2.6) |
 | Compute mode | `gpu` (CUDA / ROCm / Metal), `cpu`, `igpu` (OpenVINO on Iris Xe) | `--platform` (`configs/platforms.yaml`) |
@@ -114,13 +114,19 @@ Two labels describe a machine; both are in every result.
   desktops, ECC and power budget on workstations, shared bandwidth on
   unified-memory machines.
 
-| Tier | Model memory | Examples |
-|---|---|---|
-| `t1-minimal` | No discrete GPU; up to 16 GB shared RAM | Iris Xe / Ryzen APU office laptops, 8 GB Apple M-series |
-| `t2-entry` | 8–16 GB VRAM, or 16–36 GB Apple unified | RTX 4060–4070 Ti / 5060 Ti (desktop or laptop), Arc B580, Apple M1–M5 / Pro up to 36 GB |
-| `t3-pro` | 20–32 GB VRAM, or 48–64 GB Apple unified | RTX 4090 / 5090, RTX 4500 / 5000 Ada, Radeon AI PRO R9700, Arc Pro B60, Apple Pro / Max 48–64 GB |
-| `t4-workstation` | One accelerator with 48 GB+ VRAM, or 96 GB+ unified | RTX 6000 Ada, RTX PRO 6000 Blackwell, Radeon PRO W7900, Strix Halo 128 GB, DGX Spark, Mac Studio Max / Ultra |
-| `t5-multi-gpu` | Two or more discrete GPUs | 2× RTX 4090 / 5090, 2× RTX 6000 Ada |
+| Tier | Model memory | Examples | Platforms |
+|---|---|---|---|
+| `t1-minimal` | No discrete GPU, older integrated graphics; up to 16 GB | Iris Xe / Ryzen 5000–7000 APU office laptops, 8 GB Apple M-series | `cpu`, `openvino` |
+| `t2-integrated` | No discrete GPU; modern integrated GPU + NPU or Apple M-series; 16–36 GB | Intel Core Ultra (Arc graphics), AMD Ryzen AI 300 (Radeon 890M), Snapdragon X Elite / Plus, MacBook Air / Pro and Mac mini up to 36 GB | `openvino` (Intel), `rocm` (Ryzen AI, gfx1150), `cpu` (all, incl. arm64), `metal` (Apple) |
+| `t3-entry` | Discrete GPU with 8–16 GB VRAM | RTX 4060–4070 Ti / 5060 Ti / 5070 (desktop or laptop), Radeon RX 7600 XT–9070, Arc B580 | `cuda`, `rocm`, `xpu` |
+| `t4-pro` | 20–32 GB VRAM, or 44–89 GB unified | RTX 4090 / 5090, RTX 4500 / 5000 Ada, Radeon AI PRO R9700, Arc Pro B60, Apple Pro / Max 48–64 GB | `cuda`, `rocm`, `xpu`, `metal` |
+| `t5-workstation` | One accelerator with 48 GB+ VRAM, or 90 GB+ unified | RTX 6000 Ada, RTX PRO 6000 Blackwell, Radeon PRO W7900, Strix Halo 128 GB, DGX Spark, Mac Studio Max / Ultra | `cuda`, `rocm`, `metal` |
+| `t6-multi-gpu` | Two or more discrete GPUs | 2× RTX 4090 / 5090, 2× RTX 6000 Ada | `cuda`, `rocm` |
+
+`t1-minimal` and `t2-integrated` both lack a discrete GPU. They are separated by
+generation, not RAM alone: `t2-integrated` machines have a GPU-class integrated
+graphics unit and fast LPDDR5/5X memory, so the same 16 GB goes further. NPUs
+are not benchmarked: vLLM 0.30 and its OpenVINO plugin run on the CPU and GPU only.
 
 `python harness/fingerprint.py` prints `spec.suggested_tier` and
 `spec.machine_class`, detected from GPU memory, unified-memory platforms
@@ -250,7 +256,7 @@ from the same pinned snapshot, so runs stay offline.
 | Platform | Setup | Launch |
 |---|---|---|
 | `cuda` (GeForce, RTX Ada / Blackwell pro cards, DGX Spark) | NVIDIA driver + NVIDIA Container Toolkit; `docker pull vllm/vllm-openai:v0.30.0` (amd64 and arm64) | managed by harness |
-| `cpu` (any x86-64, Linux) | Docker; `docker pull vllm/vllm-openai-cpu:v0.30.0-x86_64`. Prefer the image: the native CPU wheel needs glibc ≥ 2.39, `libnuma1`, tcmalloc and a CPU build of torch | managed by harness |
+| `cpu` (x86-64 or arm64 incl. Snapdragon X; Linux or WSL2) | Docker; `docker pull vllm/vllm-openai-cpu:v0.30.0` (multi-arch). Prefer the image: the native CPU wheel needs glibc ≥ 2.39, `libnuma1`, tcmalloc and a CPU build of torch | managed by harness |
 | `rocm` (Radeon RX 7900 / 9070, Radeon PRO W7900, AI PRO R9700, Strix Halo) | ROCm ≥ 7.0.2 on the host; `docker pull vllm/vllm-openai-rocm:v0.30.0` | managed by harness |
 | `xpu` (Intel Arc B-series, Arc Pro B60) | Intel GPU driver; `docker pull vllm/vllm-openai-xpu:v0.30.0` | managed by harness |
 | `openvino` (Iris Xe / Intel CPU) | Build [vllm-openvino](https://github.com/vllm-project/vllm-openvino) in a venv (`VLLM_TARGET_DEVICE=empty pip install .`) | external: `VLLM_OPENVINO_DEVICE=GPU vllm serve <model> --port 8000 …` |

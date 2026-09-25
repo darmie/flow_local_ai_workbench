@@ -16,11 +16,12 @@ platforms:
     serve_args: ["--gpu-memory-utilization", "0.90"]
 
   cpu:
-    # x86-64 only (AVX512 preferred, AVX2 works with reduced features).
+    # x86-64 (AVX512 preferred, AVX2 works with reduced features) and arm64
+    # (Snapdragon X, Ampere; Linux or WSL2). Multi-arch image.
     # Also the "without GPU" arm on GPU machines: same model, GPU hidden.
     mode: cpu
     launch: docker
-    image: vllm/vllm-openai-cpu:v0.30.0-x86_64
+    image: vllm/vllm-openai-cpu:v0.30.0
     docker_args: ["--cap-add", "SYS_NICE", "--security-opt", "seccomp=unconfined",
                   "--shm-size", "4g", "-e", "CUDA_VISIBLE_DEVICES="]
     env:
@@ -31,7 +32,8 @@ platforms:
 
   rocm:
     # Radeon RX 7900 / PRO W7900 (gfx1100), RX 9070 / AI PRO R9700 (gfx1201),
-    # Strix Halo (gfx1151, ROCm >= 7.0.2 on the host).
+    # Ryzen AI 300 integrated Radeon 880M/890M (gfx1150) and Strix Halo (gfx1151),
+    # ROCm >= 7.0.2 on the host.
     mode: gpu
     launch: docker
     image: vllm/vllm-openai-rocm:v0.30.0
@@ -48,7 +50,7 @@ platforms:
     serve_args: ["--gpu-memory-utilization", "0.90"]
 
   openvino:
-    # Intel CPU or Iris Xe iGPU via the vllm-openvino plugin, which tracks an older
+    # Intel CPU or integrated GPU (Iris Xe, Core Ultra Arc graphics) via the vllm-openvino plugin, which tracks an older
     # vLLM than the pinned version above; record its commit in the run notes.
     # VLLM_OPENVINO_DEVICE=CPU|GPU selects the device.
     mode: igpu
