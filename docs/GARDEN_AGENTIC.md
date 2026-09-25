@@ -156,7 +156,7 @@ first, to confirm the checks are not the thing failing.
 
 ## 6. Known limits of the current Garden integration
 
-These are tracked as issues in this repo (`git-bug bug --label area:garden`):
+These limits apply to the Garden version this guide was written against:
 
 - Token usage is recorded per run, not per LLM call. Per-call latency goes only
   to PostHog, so model time is inferred as wall time minus tool time.
