@@ -207,28 +207,27 @@ git clone <this repo> && cd flow_local_ai_workbench
 python3 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
 sudo apt install stress-ng        # optional; improves top-up precision (brew install stress-ng on macOS)
-export BENCH_TIER=t1-minimal      # your tier, see configs/tiers.yaml
-export BENCH_MACHINE_ID=ade-thinkpad-x1   # stable, unique id for this machine
-export BENCH_MACHINE_NAME="Lenovo ThinkPad X1 Carbon Gen 10"   # make and model, as shown in reports
-export BENCH_RAM_DESC="LPDDR5-5200 dual-channel"               # memory type, speed, channels
-export BENCH_OPERATOR=ade
+python harness/fingerprint.py     # check what was detected (the "spec" block)
 ```
 
 Every report names the machine and its specification (§6.5). The harness
-detects the CPU, core count, RAM size, GPU, VRAM, driver, OS and power state
-itself. Two things need help:
+detects all of it; nothing has to be configured.
 
-- **Make and model** come from DMI on Linux and `system_profiler` on macOS.
-  Virtual machines, WSL2 and some desktops report nothing useful, so set
-  `BENCH_MACHINE_NAME`.
-- **RAM type and speed** need root (`dmidecode`). Run
-  `sudo dmidecode -t memory | grep -E "Type:|Speed:"` once and put the answer in
-  `BENCH_RAM_DESC`. DDR4 vs DDR5, and single vs dual channel, largely explain
-  decode speed on tier 1, so don't skip this.
+| Field | Detected from | Override (only if detection is wrong) |
+|---|---|---|
+| Machine id | Hostname + make/model, as a slug | `BENCH_MACHINE_ID` |
+| Make and model | DMI (Linux), `system_profiler` (macOS), `Win32_ComputerSystem` (WSL2) | `BENCH_MACHINE_NAME` |
+| RAM type, speed, modules | `dmidecode` if root, else udev's DMI properties (Linux, no root), `Win32_PhysicalMemory` (WSL2); "unified" on Apple | `BENCH_RAM_DESC` |
+| Operator | `git config user.name`, else the login name | `BENCH_OPERATOR` |
+| Tier | GPU memory / unified memory / CPU generation (§2.5) | `BENCH_TIER` or `--tier` |
+| Machine class | Chassis type, GPU product line, CPU, ECC (§2.5) | `BENCH_MACHINE_CLASS` |
 
-Check the result with `python harness/fingerprint.py | grep -A16 '"spec"'`.
-If the hardware changes (RAM upgrade, GPU swap), give the machine a new
-`BENCH_MACHINE_ID`. The report warns when one id has shown two different specs.
+Check `spec` once. If `machine_name` is generic (a VM, a self-built desktop with
+blank DMI data) or `ram_desc` says "(type unknown)", set the override:
+DDR4 vs DDR5 and the number of memory channels largely explain decode speed
+on machines without a discrete GPU. If the hardware changes (RAM upgrade, GPU
+swap), the make and model stay the same, so set a new `BENCH_MACHINE_ID`; the
+report warns when one id has shown two different specs.
 
 ### 4.2 Download models once (online), then run offline
 

@@ -53,6 +53,53 @@ def cpu_info():
     return info
 
 
+# SMBIOS memory type codes (Win32_PhysicalMemory.SMBIOSMemoryType).
+SMBIOS_MEM = {18: "DDR", 19: "DDR2", 24: "DDR3", 26: "DDR4", 27: "LPDDR", 28: "LPDDR2", 29: "LPDDR3",
+              30: "LPDDR4", 34: "DDR5", 35: "LPDDR5"}
+PS = "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+
+
+def is_wsl():
+    return "microsoft" in platform.release().lower()
+
+
+def windows_host():
+    """Maker, model and memory modules of the Windows host under WSL2 (no admin needed)."""
+    if not is_wsl() or not os.path.exists(PS):
+        return {}
+    cmd = ("$c = Get-CimInstance Win32_ComputerSystem; "
+           "$m = @(Get-CimInstance Win32_PhysicalMemory | Select-Object SMBIOSMemoryType, ConfiguredClockSpeed, Capacity); "
+           "@{maker = $c.Manufacturer; model = $c.Model; mem = $m} | ConvertTo-Json -Depth 3 -Compress")
+    try:
+        # Single quotes: the shell must not expand PowerShell's $variables.
+        return json.loads(sh(f"{PS} -NoProfile -Command '{cmd}'", timeout=30) or "{}")
+    except ValueError:
+        return {}
+
+
+def udev_memory(out=None):
+    """DIMM type/speed from udev's DMI properties (systemd >= 248), readable without root."""
+    if out is None:
+        out = sh("udevadm info --query=property --path=/sys/devices/virtual/dmi/id")
+    props = dict(l.split("=", 1) for l in out.splitlines() if "=" in l)
+    types, speeds, n = set(), set(), 0
+    for key, value in props.items():
+        m = re.match(r"MEMORY_DEVICE_(\d+)_SIZE$", key)
+        if m and value not in ("0", ""):
+            i = m.group(1)
+            n += 1
+            if props.get(f"MEMORY_DEVICE_{i}_MEMORY_TYPE"):
+                types.add(props[f"MEMORY_DEVICE_{i}_MEMORY_TYPE"])
+            speed = props.get(f"MEMORY_DEVICE_{i}_CONFIGURED_SPEED_MTS") or props.get(f"MEMORY_DEVICE_{i}_SPEED_MTS")
+            if speed:
+                speeds.add(speed)
+    if not n:
+        return None
+    ecc = props.get("MEMORY_ARRAY_ERROR_CORRECTION", "")
+    return {"type": sorted(types), "speed_mts": sorted(speeds), "populated_slots": n,
+            "source": "udev", "ecc": bool(ecc) and ecc.lower() not in ("none", "unknown")}
+
+
 def memory_info():
     vm = psutil.virtual_memory()
     info = {"total_gb": round(vm.total / 2**30, 2), "swap_gb": round(psutil.swap_memory().total / 2**30, 2)}
@@ -69,8 +116,16 @@ def memory_info():
                         "populated_slots": len(sizes), "sizes": sizes}
         ecc = re.search(r"Error Correction Type:\s*(.+)", sh("dmidecode -t 16 2>/dev/null"))
         info["ecc"] = bool(ecc and "none" not in ecc.group(1).lower())
+    elif udev_memory():
+        info["dimm"] = udev_memory()
+        info["ecc"] = info["dimm"].pop("ecc")
+    elif windows_host().get("mem"):
+        mods = windows_host()["mem"]
+        info["dimm"] = {"type": sorted({SMBIOS_MEM.get(m.get("SMBIOSMemoryType"), "") for m in mods} - {""}),
+                        "speed_mts": sorted({str(m["ConfiguredClockSpeed"]) for m in mods if m.get("ConfiguredClockSpeed")}),
+                        "populated_slots": len(mods), "source": "windows"}
     else:
-        info["dimm"] = "unknown (run fingerprint as root to read dmidecode)"
+        info["dimm"] = "unknown"
     return info
 
 
@@ -139,7 +194,11 @@ def system_model():
         ident = re.search(r"Model Identifier:\s*(.+)", hw)
         return " ".join(m.group(1).strip() for m in (name, ident) if m)
     parts = [read(f"/sys/class/dmi/id/{f}") for f in ("sys_vendor", "product_name", "product_version")]
-    parts = [p for p in parts if p and p.lower() not in ("to be filled by o.e.m.", "default string", "none")]
+    if is_wsl():
+        host = windows_host()
+        parts = [host.get("maker", ""), host.get("model", "")]
+    junk = ("to be filled by o.e.m.", "default string", "none", "system product name", "system manufacturer")
+    parts = [p.strip() for p in parts if p and p.strip().lower() not in junk]
     return " ".join(dict.fromkeys(parts))
 
 
@@ -234,11 +293,12 @@ def spec(fp):
     """
     cpu, mem = fp["cpu"], fp["memory"]
     dimm = mem.get("dimm") if isinstance(mem.get("dimm"), dict) else {}
-    ram_desc = os.environ.get("BENCH_RAM_DESC") or " ".join(filter(None, [
-        "/".join(dimm.get("type", [])),
-        f"{'/'.join(dimm.get('speed_mts', []))} MT/s" if dimm.get("speed_mts") else "",
-        f"{dimm['populated_slots']} DIMM" if dimm.get("populated_slots") else "",
-    ])) or ("unified" if sys.platform == "darwin" else "(type unknown)")
+    kind_speed = "-".join(filter(None, ["/".join(dimm.get("type", [])), "/".join(dimm.get("speed_mts", []))]))
+    modules = dimm.get("populated_slots")
+    # BENCH_RAM_DESC overrides detection (safe; only changes the label).
+    ram_desc = os.environ.get("BENCH_RAM_DESC") or ", ".join(filter(None, [
+        kind_speed, f"{modules} module{'s' if modules != 1 else ''}" if modules else ""])) \
+        or ("unified" if sys.platform == "darwin" else "(type unknown)")
     gpus = []
     for g in fp["gpus"]:
         if g.get("vendor") == "nvidia":
@@ -287,11 +347,22 @@ def spec(fp):
     return out
 
 
+def slug(text):
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+
+
+def operator():
+    """BENCH_OPERATOR, else the harness checkout's git user, else the login name."""
+    import getpass
+    here = os.path.dirname(os.path.abspath(__file__))
+    return (os.environ.get("BENCH_OPERATOR") or sh(f"git -C {here} config user.name")
+            or getpass.getuser())
+
+
 def main():
     fp = {
-        "machine_id": os.environ.get("BENCH_MACHINE_ID", platform.node()),
         "tier": os.environ.get("BENCH_TIER", ""),
-        "operator": os.environ.get("BENCH_OPERATOR", ""),
+        "operator": operator(),
         "cpu": cpu_info(),
         "memory": memory_info(),
         "gpus": gpu_info(),
@@ -300,7 +371,15 @@ def main():
         "software": software(),
         "boot_time": psutil.boot_time(),
     }
+    fp["machine_id"] = "pending"
     fp["spec"] = spec(fp)
+    # Stable id: hostname + make/model; BENCH_MACHINE_ID overrides.
+    name = fp["spec"]["machine_name"]
+    fp["machine_id"] = os.environ.get("BENCH_MACHINE_ID") or slug(
+        platform.node() + ("-" + name if name and name != "pending" else ""))[:60]
+    if fp["spec"]["machine_name"] == "pending":
+        fp["spec"]["machine_name"] = fp["machine_id"]
+    fp["spec"]["summary"] = fp["spec"]["summary"].replace("pending", fp["spec"]["machine_name"], 1)
     json.dump(fp, sys.stdout, indent=2, default=str)
     print()
 

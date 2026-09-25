@@ -18,7 +18,6 @@ import argparse
 import datetime as dt
 import json
 import os
-import platform as pyplatform
 import re
 import shlex
 import shutil
@@ -421,7 +420,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--model", required=True, choices=models)
     ap.add_argument("--platform", required=True, choices=plats["platforms"])
-    ap.add_argument("--tier", default=os.environ.get("BENCH_TIER"), choices=tiers)
+    ap.add_argument("--tier", default=os.environ.get("BENCH_TIER"), choices=tiers,
+                    help="default: the fingerprint's suggested tier")
     ap.add_argument("--profile", default="baseline", choices=profiles)
     ap.add_argument("--scenarios", default=",".join(scenarios_cfg["default_scenarios"]))
     ap.add_argument("--conditions", default="quiet", help="comma list of quiet,office,heavy")
@@ -459,8 +459,19 @@ def main():
     ap.add_argument("--serve-only", action="store_true",
                     help="start the server with this config and keep it up until Ctrl-C (for Garden runs)")
     args = ap.parse_args()
+
+    probe = Probe(args.probe) if args.probe else None
+    if probe and not args.base_url:
+        sys.exit("--probe needs --base-url: start the server on the machine under test with --serve-only")
+    # fingerprint always describes the machine under test (via the probe in LAN mode).
+    fp_raw = (probe.call("GET", "/fingerprint", raw=True).decode() if probe else
+              py("fingerprint.py", capture_output=True, text=True, check=True).stdout)
+    fp = json.loads(fp_raw)
     if not args.tier:
-        sys.exit("set --tier or BENCH_TIER (see configs/tiers.yaml)")
+        args.tier = fp["spec"]["suggested_tier"]
+        if not (args.print_serve_args or args.print_download):
+            log(f"tier {args.tier} (suggested by the fingerprint; set --tier or BENCH_TIER to override)")
+    fp["tier"] = args.tier
 
     tier, plat, model = tiers[args.tier], plats["platforms"][args.platform], dict(models[args.model])
     if plat.get("model_field"):
@@ -491,7 +502,7 @@ def main():
         print(shlex.join(Server(args, plat, model, profile, tier, None).serve_args()))
         return
 
-    machine = os.environ.get("BENCH_MACHINE_ID", pyplatform.node())
+    machine = fp["machine_id"]
     constraint = "".join([f"_off{args.cpu_offload_gb:g}" if args.cpu_offload_gb else "",
                           f"_pl{args.gpu_power_limit}" if args.gpu_power_limit else ""])
     run_id = f"{dt.datetime.now():%Y%m%d-%H%M%S}_{machine}_{args.model}_{args.platform}_{args.profile}{constraint}"
@@ -502,18 +513,10 @@ def main():
     log(f"run dir: {run_dir}")
 
     env = dict(os.environ, BENCH_TIER=args.tier, VLLM_IMAGE=plat.get("image", ""))
-    probe = Probe(args.probe) if args.probe else None
-    if probe and not args.base_url:
-        sys.exit("--probe needs --base-url: start the server on the machine under test with --serve-only")
+    json.dump(fp, open(os.path.join(run_dir, "fingerprint.json"), "w"), indent=2, default=str)
     if probe:
-        # fingerprint.json always describes the machine under test.
-        open(os.path.join(run_dir, "fingerprint.json"), "wb").write(probe.call("GET", "/fingerprint", raw=True))
         with open(os.path.join(run_dir, "client_fingerprint.json"), "w") as f:
             py("fingerprint.py", stdout=f, env=env, check=True)
-    else:
-        with open(os.path.join(run_dir, "fingerprint.json"), "w") as f:
-            py("fingerprint.py", stdout=f, env=env, check=True)
-    fp = json.load(open(os.path.join(run_dir, "fingerprint.json")))
 
     conditions = [c.strip() for c in args.conditions.split(",") if c.strip()]
     cond = RemoteCondition(args, run_dir, probe) if probe else Condition(args, run_dir)
@@ -532,7 +535,7 @@ def main():
         "power_source": fp["spec"].get("power", ""), "machine_class": fp["spec"].get("machine_class", ""),
         "max_model_len": args.max_model_len, "repeats": args.repeats,
         "client": "lan" if probe else args.client, "probe": args.probe or None,
-        "stress_ng": bool(shutil.which("stress-ng")), "operator": os.environ.get("BENCH_OPERATOR", ""),
+        "stress_ng": bool(shutil.which("stress-ng")), "operator": fp.get("operator", ""),
         "notes": args.notes, "conditions": {}, "points": [], "crashes": [],
     }
     mpath = os.path.join(run_dir, "manifest.json")

@@ -10,7 +10,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "harness"))
 
 from summarize import _is_throttled  # noqa: E402
-from fingerprint import accelerator, machine_class, suggest_tier  # noqa: E402
+from fingerprint import accelerator, machine_class, suggest_tier, udev_memory  # noqa: E402
 from hostload import parse_typeperf_line  # noqa: E402
 from telemetry import parse_powermetrics  # noqa: E402
 
@@ -89,6 +89,19 @@ class MachineClassTest(unittest.TestCase):
         self.assertEqual(self.cls(_fp(cpu="AMD RYZEN AI MAX+ 395", ram=124), "desktop"), "uma-workstation")
         self.assertEqual(self.cls(_fp(arch="arm64", ram=36, os_name="macOS-15.5-arm64-arm-64bit"), "laptop"), "apple")
         self.assertEqual(self.cls(_fp(gpus=[_nv("NVIDIA L40S", 46068)] * 2), "server"), "server")
+
+
+class UdevMemoryTest(unittest.TestCase):
+    def test_two_ddr5_modules(self):
+        out = "\n".join(["MEMORY_ARRAY_ERROR_CORRECTION=None", "MEMORY_DEVICE_0_SIZE=17179869184",
+                         "MEMORY_DEVICE_0_MEMORY_TYPE=DDR5", "MEMORY_DEVICE_0_CONFIGURED_SPEED_MTS=5600",
+                         "MEMORY_DEVICE_1_SIZE=17179869184", "MEMORY_DEVICE_1_MEMORY_TYPE=DDR5",
+                         "MEMORY_DEVICE_1_CONFIGURED_SPEED_MTS=5600", "MEMORY_DEVICE_2_SIZE=0"])
+        d = udev_memory(out)
+        self.assertEqual((d["type"], d["speed_mts"], d["populated_slots"], d["ecc"]), (["DDR5"], ["5600"], 2, False))
+
+    def test_absent(self):
+        self.assertIsNone(udev_memory("ID_VENDOR=x"))
 
 
 class ThrottleTest(unittest.TestCase):

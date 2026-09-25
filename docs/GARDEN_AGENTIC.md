@@ -89,7 +89,8 @@ install the PostgreSQL client (`apt install postgresql-client`).
 ## 3. Procedure
 
 ```bash
-RUN=results/$(date +%Y%m%d-%H%M%S)_${BENCH_MACHINE_ID}_qwen3-8b-awq_cuda_agentic
+MID=$(python harness/fingerprint.py | python -c "import json,sys; print(json.load(sys.stdin)['machine_id'])")
+RUN=results/$(date +%Y%m%d-%H%M%S)_${MID}_qwen3-8b-awq_cuda_agentic
 python harness/garden_agentic.py --run-dir $RUN --parallel 1 --repeats 3
 python harness/garden_agentic.py --run-dir $RUN --parallel 2 --repeats 3
 python harness/garden_agentic.py --run-dir $RUN --parallel 4 --repeats 3   # tiers 2+

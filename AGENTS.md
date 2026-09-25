@@ -52,22 +52,15 @@ Run each step and confirm with the user where noted.
    reported as `unknown`), set `BENCH_MACHINE_CLASS`. Do not publish numbers
    from a machine whose class is `virtual`.
 
-3. **Name the machine.**
-   - If `spec.machine_name` is missing or generic (a hostname, "vm", "System
-     Product Name"), ask the user for the make and model. Set it as
-     `BENCH_MACHINE_NAME`.
-   - If `spec.ram_desc` is `(type unknown)`, ask the user to run
-     `sudo dmidecode -t memory | grep -E "Type:|Speed:"`, or run it yourself if
-     they approve sudo. Set `BENCH_RAM_DESC`, for example
-     `DDR5-4800 dual-channel`.
-   - Choose a stable `BENCH_MACHINE_ID` (lowercase, no spaces, e.g.
-     `ade-thinkpad-x1`) and set `BENCH_OPERATOR` to the user's name.
-4. **Save the settings.** Export them for the session, and suggest the user adds
-   them to their shell profile:
+3. **Check the machine's identity.** Machine id, make and model, RAM type and
+   operator are detected (METHODOLOGY §4.1). Only when `spec.machine_name` is
+   generic (a hostname, "vm") or `spec.ram_desc` is `(type unknown)`, ask the
+   user for the make and model, or for the output of
+   `sudo dmidecode -t memory | grep -E "Type:|Speed:"` (run it yourself only if
+   they approve sudo), and export the override:
 
    ```bash
-   export BENCH_TIER=... BENCH_MACHINE_ID=... BENCH_OPERATOR=...
-   export BENCH_MACHINE_NAME="..." BENCH_RAM_DESC="..."   # BENCH_MACHINE_CLASS only to override
+   export BENCH_MACHINE_NAME="..." BENCH_RAM_DESC="DDR5-5600, 2 modules"
    ```
 
 ## 2. Prepare the environment
@@ -182,7 +175,7 @@ Before writing the report, check `headline.csv` for:
 ```markdown
 # Local LLM benchmark: <machine_name>
 
-**Operator:** <BENCH_OPERATOR>   **Date:** <date>   **Harness commit:** <sha>   **vLLM:** 0.30.0
+**Operator:** <operator from fingerprint.json>   **Date:** <date>   **Harness commit:** <sha>   **vLLM:** 0.30.0
 
 ## Machine
 <the Machines table from report_tables.md>
