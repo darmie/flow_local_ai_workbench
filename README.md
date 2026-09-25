@@ -1,9 +1,10 @@
 # Flow Local AI Workbench
 
 A reproducible harness for benchmarking local LLMs served with
-[vLLM](https://github.com/vllm-project/vllm) on constrained machines, from
-office laptops (CPU / Iris Xe) to RTX workstations, Apple Silicon and Strix
-Halo. Agentic workloads are evaluated through
+[vLLM](https://github.com/vllm-project/vllm) on constrained machines: office
+laptops (CPU / Iris Xe), gaming laptops and desktops, pro workstations (RTX Ada /
+Blackwell, Radeon PRO, Arc Pro), unified-memory machines (Apple Silicon, Strix
+Halo, DGX Spark) and multi-GPU servers. Agentic workloads are evaluated through
 [Garden](https://github.com/Flow-Research/garden).
 
 - **[docs/METHODOLOGY.md](docs/METHODOLOGY.md)**: variables, host conditions (quiet vs under load),
@@ -18,7 +19,7 @@ Halo. Agentic workloads are evaluated through
 python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
 tests/smoke.sh                                   # validate the harness (stub vLLM, ~4 min)
 
-export BENCH_TIER=t2-entry-dgpu BENCH_MACHINE_ID=<unique-id> BENCH_OPERATOR=<you>
+export BENCH_TIER=t2-entry BENCH_MACHINE_ID=<unique-id> BENCH_OPERATOR=<you>
 export BENCH_MACHINE_NAME="<make and model>" BENCH_RAM_DESC="<e.g. DDR5-5600 dual-channel>"
 hf download Qwen/Qwen3-8B-AWQ                    # once, online
 python harness/run_suite.py --model qwen3-8b-awq --platform cuda                 # quiet, GPU

@@ -46,15 +46,11 @@ Run each step and confirm with the user where noted.
 
 1. **Fingerprint.** Run `python harness/fingerprint.py` and read the `spec`
    block.
-2. **Choose the tier** from the fingerprint using this table, then confirm it
-   with the user:
-
-   | Condition | Tier |
-   |---|---|
-   | 2+ discrete GPUs | `t4-multi-gpu` |
-   | One discrete GPU with ≥ 20 GB VRAM, Apple Silicon with ≥ 48 GB, or AMD Strix Halo | `t3-pro` |
-   | One discrete GPU with 8–16 GB VRAM, or Apple Silicon with < 48 GB | `t2-entry-dgpu` |
-   | No discrete GPU (CPU and/or integrated graphics) | `t1-minimal` |
+2. **Choose the tier and class.** The fingerprint suggests both
+   (`spec.suggested_tier`, `spec.machine_class`; rules in METHODOLOGY §2.5).
+   Confirm them with the user. If the class is wrong (blank DMI data, a desktop
+   reported as `unknown`), set `BENCH_MACHINE_CLASS`. Do not publish numbers
+   from a machine whose class is `virtual`.
 
 3. **Name the machine.**
    - If `spec.machine_name` is missing or generic (a hostname, "vm", "System
@@ -71,7 +67,7 @@ Run each step and confirm with the user where noted.
 
    ```bash
    export BENCH_TIER=... BENCH_MACHINE_ID=... BENCH_OPERATOR=...
-   export BENCH_MACHINE_NAME="..." BENCH_RAM_DESC="..."
+   export BENCH_MACHINE_NAME="..." BENCH_RAM_DESC="..."   # BENCH_MACHINE_CLASS only to override
    ```
 
 ## 2. Prepare the environment
@@ -88,6 +84,7 @@ Then check the platform. Install only what is missing, and only with approval.
 | `cuda` | `docker run --rm --gpus all ubuntu nvidia-smi` prints the GPU (needs NVIDIA Container Toolkit) |
 | `cpu` | `docker info` works; Linux x86-64 only (use WSL2 on Windows) |
 | `rocm` | `docker run --rm --device /dev/kfd --device /dev/dri rocm/rocm-terminal rocm-smi` |
+| `xpu` | `ls /dev/dri/render*` shows the Intel GPU; pull `vllm/vllm-openai-xpu:v0.30.0` |
 | `openvino`, `metal` | Server is launched by hand, see METHODOLOGY §4.3. On macOS ask the user to run `sudo -v` first so telemetry can read `powermetrics` |
 
 Other checks:
@@ -131,6 +128,10 @@ python harness/run_suite.py --model $M --platform cpu
 
 # Phase 2 (tokenization), only if asked: see METHODOLOGY §5.4
 python harness/run_suite.py --model $M --platform $P --scenarios flores
+
+# Constraint tests (METHODOLOGY §2.6), only if asked and approved by the owner
+python harness/run_suite.py --model $M --platform $P --cpu-offload-gb 8     # model larger than VRAM
+python harness/run_suite.py --model $M --platform $P --gpu-power-limit 200  # needs sudo -v
 
 # 4. Engine profiles, only if the user asks for Phase 4 work
 python harness/run_suite.py --model $M --platform $P --profile prefix-cache
