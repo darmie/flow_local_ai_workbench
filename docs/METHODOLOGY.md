@@ -292,10 +292,27 @@ server is stopped and the top-up is removed.
 
 On tier-1 machines the benchmark client competes with the model for CPU. The
 client's CPU is counted as harness load (§3.1), not background. For final
-tier-1 numbers, run the client from a second machine on the LAN: start the
-server on the machine under test, then run `run_suite.py` on the second machine
-with `--base-url http://<ip>:8000`. Telemetry must run on the machine under
-test: start `harness/telemetry.py` there by hand and merge it afterwards.
+tier-1 numbers, run the client from a second machine on the LAN. All host-side
+work (fingerprint, host-condition checks and top-up, telemetry) then runs on
+the machine under test through `harness/probe.py`:
+
+```bash
+# machine under test
+export BENCH_PROBE_TOKEN=<shared secret>
+python harness/probe.py --port 9109 &
+python harness/run_suite.py --model $M --platform $P --serve-only
+
+# client machine (same checkout, same BENCH_* settings)
+export BENCH_PROBE_TOKEN=<shared secret>
+python harness/run_suite.py --model $M --platform $P \
+  --base-url http://<target-ip>:8000 --probe http://<target-ip>:9109
+```
+
+- `fingerprint.json` describes the machine under test; the client's own is
+  kept as `client_fingerprint.json`.
+- The manifest records `client: lan`.
+- The probe only accepts requests carrying the token. Keep port 9109 on the
+  local network.
 
 ---
 

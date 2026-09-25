@@ -26,6 +26,7 @@ import signal
 import subprocess
 import sys
 import time
+import urllib.parse
 import urllib.request
 
 import yaml
@@ -202,6 +203,58 @@ class Condition:
             self.proc = None
 
 
+class Probe:
+    """Client for harness/probe.py running on the machine under test (LAN-client runs)."""
+
+    def __init__(self, url):
+        self.url = url.rstrip("/")
+        self.token = os.environ.get("BENCH_PROBE_TOKEN") or sys.exit("set BENCH_PROBE_TOKEN for --probe")
+
+    def call(self, method, path, body=None, raw=False, timeout=600):
+        req = urllib.request.Request(self.url + path, data=body, method=method,
+                                     headers={"X-Probe-Token": self.token})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            data = r.read()
+        return data if raw else json.loads(data or b"{}")
+
+
+class RemoteCondition:
+    """Condition, but measured and topped up on the machine under test via the probe."""
+
+    def __init__(self, args, run_dir, probe):
+        self.args, self.run_dir, self.probe, self.active = args, run_dir, probe, False
+
+    def _hostload(self, target, **flags):
+        q = urllib.parse.urlencode({"target": target, **{k: "1" for k, v in flags.items() if v is True},
+                                    **{k: v for k, v in flags.items() if not isinstance(v, bool)}})
+        res = self.probe.call("GET", f"/hostload?{q}")
+        print(res["log"], end="", flush=True)
+        return res
+
+    def enter(self, target):
+        res = self._hostload(target, **{"no-topup": self.args.no_topup, "force": self.args.force})
+        plan = res["report"]
+        json.dump(plan, open(os.path.join(self.run_dir, f"hostload_{target}.json"), "w"), indent=2, default=str)
+        if res["exit_code"] != 0:
+            return None
+        if plan["action"] == "topup":
+            self.probe.call("POST", "/contention/start", json.dumps(plan).encode())
+            self.active = True
+            t0 = time.time()
+            while not self.probe.call("GET", "/contention/ready")["ready"] and time.time() - t0 < 300:
+                time.sleep(2)
+            verify = self._hostload(target, verify=True, window="15")["report"]
+            json.dump(verify, open(os.path.join(self.run_dir, f"hostload_{target}_verify.json"), "w"),
+                      indent=2, default=str)
+            plan["verified"] = verify["measured_class"]
+        return plan
+
+    def exit(self):
+        if self.active:
+            self.probe.call("POST", "/contention/stop")
+            self.active = False
+
+
 def goodput_ratio(path):
     try:
         r = json.load(open(path))
@@ -228,6 +281,7 @@ def main():
     ap.add_argument("--pp", type=int, default=1)
     ap.add_argument("--extra-serve-args", default="")
     ap.add_argument("--base-url", default="", help="benchmark an already-running server")
+    ap.add_argument("--probe", default="", help="harness/probe.py URL on the machine under test (LAN-client runs)")
     ap.add_argument("--client", choices=["local", "docker"], default="local" if shutil.which("vllm") else "docker")
     ap.add_argument("--hf-cache", default=os.path.expanduser("~/.cache/huggingface"))
     ap.add_argument("--online", action="store_true", help="allow HF downloads during the run (default: offline)")
@@ -265,12 +319,21 @@ def main():
     log(f"run dir: {run_dir}")
 
     env = dict(os.environ, BENCH_TIER=args.tier, VLLM_IMAGE=plat.get("image", ""))
-    with open(os.path.join(run_dir, "fingerprint.json"), "w") as f:
-        py("fingerprint.py", stdout=f, env=env, check=True)
+    probe = Probe(args.probe) if args.probe else None
+    if probe and not args.base_url:
+        sys.exit("--probe needs --base-url: start the server on the machine under test with --serve-only")
+    if probe:
+        # fingerprint.json always describes the machine under test.
+        open(os.path.join(run_dir, "fingerprint.json"), "wb").write(probe.call("GET", "/fingerprint", raw=True))
+        with open(os.path.join(run_dir, "client_fingerprint.json"), "w") as f:
+            py("fingerprint.py", stdout=f, env=env, check=True)
+    else:
+        with open(os.path.join(run_dir, "fingerprint.json"), "w") as f:
+            py("fingerprint.py", stdout=f, env=env, check=True)
     fp = json.load(open(os.path.join(run_dir, "fingerprint.json")))
 
     conditions = [c.strip() for c in args.conditions.split(",") if c.strip()]
-    cond = Condition(args, run_dir)
+    cond = RemoteCondition(args, run_dir, probe) if probe else Condition(args, run_dir)
     # The quiet gate runs before the server exists so it cannot count the model load as noise.
     if "quiet" in conditions and cond.enter("quiet") is None:
         sys.exit("machine is not quiet (see hostload_quiet.json); close apps or pass --force")
@@ -282,7 +345,8 @@ def main():
         "vllm_version": plats["vllm_version"], "vllm_image": plat.get("image", "external"),
         "harness_commit": fp["software"].get("harness_commit"),
         "harness_dirty": fp["software"].get("harness_dirty"),
-        "max_model_len": args.max_model_len, "repeats": args.repeats, "client": args.client,
+        "max_model_len": args.max_model_len, "repeats": args.repeats,
+        "client": "lan" if probe else args.client, "probe": args.probe or None,
         "stress_ng": bool(shutil.which("stress-ng")), "operator": os.environ.get("BENCH_OPERATOR", ""),
         "notes": args.notes, "conditions": {}, "points": [],
     }
@@ -308,9 +372,16 @@ def main():
                 urllib.request.urlopen(server.base_url + "/metrics", timeout=5).read().decode())
         except OSError:
             pass
-        telemetry = subprocess.Popen([sys.executable, os.path.join(HERE, "telemetry.py"),
-                                      "--out", os.path.join(run_dir, "telemetry.csv"),
-                                      "--metrics-url", server.base_url + "/metrics"])
+        if probe:
+            # The probe scrapes vLLM from the machine under test, so it uses the server's local port.
+            port = urllib.parse.urlparse(server.base_url).port or PORT
+            probe.call("POST", "/telemetry/start?" + urllib.parse.urlencode(
+                {"metrics_url": f"http://127.0.0.1:{port}/metrics"}))
+            telemetry = "probe"
+        else:
+            telemetry = subprocess.Popen([sys.executable, os.path.join(HERE, "telemetry.py"),
+                                          "--out", os.path.join(run_dir, "telemetry.csv"),
+                                          "--metrics-url", server.base_url + "/metrics"])
         save()
 
         scen_names = [s.strip() for s in args.scenarios.split(",") if s.strip()]
@@ -365,7 +436,10 @@ def main():
         log(f"aborting: {e}")
         manifest["aborted"] = str(e)
     finally:
-        if telemetry:
+        if telemetry == "probe":
+            probe.call("POST", "/telemetry/stop")
+            open(os.path.join(run_dir, "telemetry.csv"), "wb").write(probe.call("GET", "/telemetry.csv", raw=True))
+        elif telemetry:
             telemetry.send_signal(signal.SIGINT)
             telemetry.wait(timeout=10)
         cond.exit()
