@@ -110,6 +110,20 @@ class UdevMemoryTest(unittest.TestCase):
         self.assertIsNone(udev_memory("ID_VENDOR=x"))
 
 
+class ModelsConfigTest(unittest.TestCase):
+    def test_models_yaml_is_valid(self):
+        import subprocess
+        r = subprocess.run([sys.executable, os.path.join(ROOT, "harness", "check_models.py")],
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout)
+
+    def test_rejects_unpinned(self):
+        from check_models import check
+        errs = check("new-model", {"hf": "org/name", "revision": "main", "quant": "awq", "params_b": 7,
+                                   "tiers": ["t3-entry"]}, {"t3-entry": {}}, {})
+        self.assertTrue(any("40-character" in e for e in errs))
+
+
 class ThrottleTest(unittest.TestCase):
     def test_idle_is_not_throttle(self):
         self.assertFalse(_is_throttled("0x0000000000000001"))

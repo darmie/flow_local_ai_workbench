@@ -10,6 +10,7 @@ Halo, DGX Spark) and multi-GPU servers. Agentic workloads are evaluated through
 - **[docs/METHODOLOGY.md](docs/METHODOLOGY.md)**: variables, host conditions (quiet vs under load),
   GPU vs CPU arms, procedure, metrics, SLOs, pitfalls. Start here.
 - **[docs/GARDEN_AGENTIC.md](docs/GARDEN_AGENTIC.md)**: agent task success, latency and token cost via Garden.
+- **[docs/ADDING_MODELS.md](docs/ADDING_MODELS.md)**: how to add a model to the matrix (pinning, quantisation, validation).
 - **[AGENTS.md](AGENTS.md)**: operating procedure for AI coding agents asked to run the benchmark on a
   machine and write its report.
 
@@ -44,6 +45,7 @@ speed, GPU/VRAM, OS); see METHODOLOGY §6.5.
 | `harness/summarize.py`, `harness/report.py` | Point-level CSV and headline table (capacity, energy, flags) |
 | `harness/garden_agentic.py` | Garden issue-run driver and scorer |
 | `harness/probe.py` | Host-side agent on the machine under test for LAN-client runs |
+| `harness/check_models.py` | Validates `configs/models.yaml` (pinned revisions, tiers, platforms, parser names) |
 | `harness/flores.py` | Phase 2: FLORES+ parallel-text datasets and tokenizer fertility |
 | `tests/*_smoke.sh`, `tests/test_parsers.py` | End-to-end tests (serving suite, Garden runner, LAN mode, Phase 2 pipeline) against stubs, and parser unit tests |
 
