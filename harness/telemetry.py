@@ -21,6 +21,8 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
+import threading
 import time
 import urllib.request
 
@@ -31,13 +33,13 @@ from hostload import BackgroundSampler
 FIELDS = [
     "ts", "cpu_util_pct", "bg_cpu_pct", "harness_cpu_pct", "cpu_freq_mhz", "load1",
     "mem_used_gb", "mem_avail_gb", "bg_mem_used_gb", "harness_rss_gb",
-    "swap_used_gb", "swap_in_mb_s", "cpu_temp_c", "cpu_pkg_power_w",
+    "swap_used_gb", "swap_in_mb_s", "host_scope", "cpu_temp_c", "cpu_pkg_power_w",
     "gpu_util_pct", "gpu_mem_used_gb", "gpu_mem_total_gb", "gpu_power_w",
     "gpu_temp_c", "gpu_sm_clock_mhz", "gpu_throttle_reasons",
     "vllm_running", "vllm_waiting", "vllm_kv_cache_usage", "vllm_preemptions_total",
     "vllm_prefix_cache_hits_total", "vllm_prefix_cache_queries_total",
     "vllm_prompt_tokens_total", "vllm_generation_tokens_total",
-    "ext_power_w",
+    "ane_power_w", "soc_power_w", "ext_power_w",
 ]
 
 # vLLM metric names drift between releases; match on any of these aliases.
@@ -51,6 +53,71 @@ VLLM_METRICS = {
     "vllm_prompt_tokens_total": ["vllm:prompt_tokens_total"],
     "vllm_generation_tokens_total": ["vllm:generation_tokens_total"],
 }
+
+
+def parse_powermetrics(doc):
+    """One `powermetrics -f plist` sample -> watts and GPU busy %.
+
+    Apple Silicon reports power in mW under `processor`; GPU residency is
+    `gpu.idle_ratio`. Missing keys yield empty values."""
+    import plistlib
+    try:
+        d = plistlib.loads(doc)
+    except Exception:
+        return {}
+    proc, gpu = d.get("processor", {}), d.get("gpu", {})
+
+    def mw(*keys):
+        for src in (proc, gpu, d):
+            for k in keys:
+                if isinstance(src.get(k), (int, float)):
+                    return round(src[k] / 1000, 2)
+        return ""
+
+    out = {"cpu_pkg_power_w": mw("cpu_power"), "gpu_power_w": mw("gpu_power"),
+           "ane_power_w": mw("ane_power"), "soc_power_w": mw("combined_power")}
+    if isinstance(gpu.get("idle_ratio"), (int, float)):
+        out["gpu_util_pct"] = round(100 * (1 - gpu["idle_ratio"]), 1)
+    if isinstance(gpu.get("freq_hz"), (int, float)):
+        out["gpu_sm_clock_mhz"] = round(gpu["freq_hz"] / 1e6)
+    return out
+
+
+class PowerMetrics:
+    """macOS power/GPU sampler: streams `powermetrics` (needs root; uses
+    `sudo -n`, so run `sudo -v` first) and keeps the latest sample."""
+
+    def __init__(self, interval_s):
+        self.latest, self.proc = {}, None
+        if sys.platform != "darwin" or not shutil.which("powermetrics"):
+            return
+        cmd = ["powermetrics", "--samplers", "cpu_power,gpu_power", "-i", str(int(interval_s * 1000)),
+               "-f", "plist"]
+        if os.geteuid() != 0:
+            cmd = ["sudo", "-n"] + cmd
+        try:
+            self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        except OSError:
+            return
+        threading.Thread(target=self._read, daemon=True).start()
+
+    def _read(self):
+        buf = b""
+        for chunk in iter(lambda: self.proc.stdout.read(4096), b""):
+            buf += chunk
+            # Samples are separated by NUL bytes.
+            while b"\0" in buf:
+                doc, buf = buf.split(b"\0", 1)
+                sample = parse_powermetrics(doc.strip())
+                if sample:
+                    self.latest = sample
+
+    def sample(self):
+        return dict(self.latest)
+
+    def stop(self):
+        if self.proc:
+            self.proc.terminate()
 
 
 class Rapl:
@@ -198,6 +265,7 @@ def main():
 
     rapl = Rapl()
     rapl.watts()
+    pm = PowerMetrics(args.interval)
     bg = BackgroundSampler()
     with open(args.out, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=FIELDS)
@@ -215,6 +283,7 @@ def main():
                 "bg_mem_used_gb": b["bg_mem_used_gb"],
                 "harness_rss_gb": b["harness_rss_gb"],
                 "swap_in_mb_s": b["swap_in_mb_s"],
+                "host_scope": b["host_scope"],
                 "cpu_freq_mhz": round(freq.current) if freq else "",
                 "load1": round(os.getloadavg()[0], 2),
                 "mem_used_gb": round((vm.total - vm.available) / 2**30, 3),
@@ -225,10 +294,12 @@ def main():
                 "ext_power_w": ext_power(args.ext_power_file),
             }
             row.update(nvidia() or rocm())
+            row.update({k: v for k, v in pm.sample().items() if v != ""})
             row.update(scrape_vllm(args.metrics_url))
             w.writerow(row)
             f.flush()
             time.sleep(max(0.0, args.interval - (time.monotonic() - t0)))
+    pm.stop()
 
 
 if __name__ == "__main__":

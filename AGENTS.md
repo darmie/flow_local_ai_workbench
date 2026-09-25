@@ -88,7 +88,7 @@ Then check the platform. Install only what is missing, and only with approval.
 | `cuda` | `docker run --rm --gpus all ubuntu nvidia-smi` prints the GPU (needs NVIDIA Container Toolkit) |
 | `cpu` | `docker info` works; Linux x86-64 only (use WSL2 on Windows) |
 | `rocm` | `docker run --rm --device /dev/kfd --device /dev/dri rocm/rocm-terminal rocm-smi` |
-| `openvino`, `metal` | Server is launched by hand, see METHODOLOGY §4.3 |
+| `openvino`, `metal` | Server is launched by hand, see METHODOLOGY §4.3. On macOS ask the user to run `sudo -v` first so telemetry can read `powermetrics` |
 
 Other checks:
 

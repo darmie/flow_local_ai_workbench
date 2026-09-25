@@ -40,6 +40,55 @@ def is_harness(proc):
         return False
 
 
+def parse_typeperf_line(line):
+    """One typeperf CSV data row -> (cpu %, available MB), or None for headers/blanks."""
+    import csv as _csv
+    cells = next(_csv.reader([line.strip()]), [])
+    if len(cells) < 3 or cells[0].startswith("(PDH"):
+        return None
+    try:
+        return float(cells[1]), float(cells[2])
+    except ValueError:
+        return None
+
+
+class WindowsHost:
+    """Whole-Windows CPU and memory when running inside WSL2, where psutil only
+    sees the Linux VM. Streams typeperf.exe once per second."""
+
+    PS = "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+    TYPEPERF = "/mnt/c/Windows/System32/typeperf.exe"
+
+    def __init__(self):
+        self.latest, self.proc = None, None
+        if "microsoft" not in os.uname().release.lower() or not os.path.exists(self.TYPEPERF):
+            return
+        try:
+            info = subprocess.run([self.PS, "-NoProfile", "-Command",
+                                   "[Environment]::ProcessorCount; "
+                                   "(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory"],
+                                  capture_output=True, text=True, timeout=30).stdout.split()
+            self.ncpu, self.total_gb = int(info[0]), int(info[1]) / 2**30
+            self.proc = subprocess.Popen([self.TYPEPERF, r"\Processor(_Total)\% Processor Time",
+                                          r"\Memory\Available MBytes", "-si", "1"],
+                                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+            self.proc = None
+            return
+        import threading
+        threading.Thread(target=self._read, daemon=True).start()
+
+    def _read(self):
+        for line in self.proc.stdout:
+            parsed = parse_typeperf_line(line)
+            if parsed:
+                self.latest = parsed
+
+    @property
+    def active(self):
+        return self.proc is not None and self.latest is not None
+
+
 class BackgroundSampler:
     """Per-interval split of CPU and memory into harness vs background.
 
@@ -54,6 +103,7 @@ class BackgroundSampler:
         self._refresh()
         self.swap_in = psutil.swap_memory().sin
         self.t = time.monotonic()
+        self.win = WindowsHost()
 
     def _refresh(self):
         live = {}
@@ -83,7 +133,17 @@ class BackgroundSampler:
         self._refresh()
         harness_cpu_pct = min(total_cpu, harness_cpu / self.ncpu)
         vm = psutil.virtual_memory()
-        used = vm.total - vm.available
+        used, mem_total, mem_avail = vm.total - vm.available, vm.total, vm.available
+        scope = "local"
+        if self.win.active:
+            # Measure against the whole Windows host so apps outside WSL2 count as background.
+            host_cpu, avail_mb = self.win.latest
+            harness_cpu_pct = min(host_cpu, harness_cpu / self.win.ncpu)
+            total_cpu = host_cpu
+            mem_total = self.win.total_gb * 2**30
+            mem_avail = avail_mb * 2**20
+            used = mem_total - mem_avail
+            scope = "windows-host"
         now, sin = time.monotonic(), psutil.swap_memory().sin
         swap_in_mb_s = (sin - self.swap_in) / 2**20 / max(1e-3, now - self.t)
         self.swap_in, self.t = sin, now
@@ -93,8 +153,10 @@ class BackgroundSampler:
             "bg_cpu_pct": round(max(0.0, total_cpu - harness_cpu_pct), 2),
             "harness_rss_gb": round(harness_rss / 2**30, 3),
             "bg_mem_used_gb": round(max(0, used - harness_rss) / 2**30, 3),
-            "mem_total_gb": round(vm.total / 2**30, 3),
-            "mem_avail_gb": round(vm.available / 2**30, 3),
+            "mem_total_gb": round(mem_total / 2**30, 3),
+            "mem_avail_gb": round(mem_avail / 2**30, 3),
+            "local_mem_avail_gb": round(vm.available / 2**30, 3),
+            "host_scope": scope,
             "swap_in_mb_s": round(swap_in_mb_s, 3),
         }
 
@@ -155,6 +217,8 @@ def measure(window):
         "harness_rss_gb": median([x["harness_rss_gb"] for x in samples]),
         "mem_total_gb": samples[-1]["mem_total_gb"],
         "mem_avail_gb": samples[-1]["mem_avail_gb"],
+        "local_mem_avail_gb": samples[-1]["local_mem_avail_gb"],
+        "host_scope": samples[-1]["host_scope"],
         "swap_in_mb_s": median([x["swap_in_mb_s"] for x in samples]),
         **gpu,
     }
@@ -181,7 +245,8 @@ def plan(target_name, m, cfg, allow_topup):
     cpu_gap = max(0.0, target.get("bg_cpu_pct_min", 0) - m["bg_cpu_pct"])
     mem_goal = target.get("bg_mem_frac_min", 0) * m["mem_total_gb"]
     # Never push free memory below max(2 GB, 10% of RAM): the point is contention, not OOM.
-    mem_room = m["mem_avail_gb"] - max(2.0, 0.1 * m["mem_total_gb"])
+    # Top-up memory is allocated where the harness runs (a WSL2 VM may be smaller than the host).
+    mem_room = min(m["mem_avail_gb"], m.get("local_mem_avail_gb", m["mem_avail_gb"])) - max(2.0, 0.1 * m["mem_total_gb"])
     mem_gap = max(0.0, min(mem_goal - m["bg_mem_used_gb"], mem_room))
     if cpu_gap < 2 and mem_gap < 0.25 and not target.get("mem_bandwidth_hog"):
         out["note"] = "organic background load already meets the target"

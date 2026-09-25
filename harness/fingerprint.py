@@ -116,6 +116,7 @@ def software():
     if sys.platform.startswith("linux"):
         sw["distro"] = (re.search(r'PRETTY_NAME="(.+)"', read("/etc/os-release")) or [None, ""])[1]
         sw["kernel"] = platform.release()
+        sw["wsl"] = "microsoft" in platform.release().lower()
     sw["vllm"] = sh(f"{sys.executable} -c 'import vllm; print(vllm.__version__)' 2>/dev/null")
     sw["docker"] = sh("docker --version")
     sw["vllm_image"] = os.environ.get("VLLM_IMAGE", "")
@@ -176,7 +177,8 @@ def spec(fp):
         "gpu_driver": " ".join(filter(None, [nv.get("driver", ""), f"CUDA {nv['cuda']}" if nv.get("cuda") else ""])),
         "gpu_power_limit": nv.get("power_limit", ""),
         "gpu_pcie": nv.get("pcie", ""),
-        "os": fp["software"].get("distro") or fp["software"].get("os", ""),
+        "os": (fp["software"].get("distro") or fp["software"].get("os", ""))
+              + (" (WSL2 on Windows)" if fp["software"].get("wsl") else ""),
         "kernel": fp["software"].get("kernel", ""),
         "power": "AC" if fp["power"].get("on_ac", True) else "battery",
         "power_profile": fp["power"].get("power_profile") or cpu.get("governor", ""),

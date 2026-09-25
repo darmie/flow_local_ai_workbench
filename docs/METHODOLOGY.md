@@ -204,8 +204,15 @@ hf download meta-llama/Llama-3.2-3B-Instruct   # gated: needs `hf auth login` + 
 | `openvino` (Iris Xe / Intel CPU) | Build [vllm-openvino](https://github.com/vllm-project/vllm-openvino) in a venv (`VLLM_TARGET_DEVICE=empty pip install .`) | external: `VLLM_OPENVINO_DEVICE=GPU vllm serve <model> --port 8000 …` |
 | `metal` (Apple Silicon) | Install [vllm-metal](https://github.com/vllm-project/vllm-metal) (Homebrew tap) | external: `vllm serve mlx-community/<model> --port 8000 …` |
 
-- **Windows machines:** run the harness inside WSL2. The NVIDIA Container
-  Toolkit works there. The CPU arm is Linux-only.
+- **Windows machines:** run the harness inside WSL2 (the NVIDIA Container
+  Toolkit and `nvidia-smi` work there; the CPU arm is Linux-only, so it also
+  runs in WSL2). Inside WSL2, `psutil` sees only the Linux VM, so the harness
+  reads whole-Windows CPU and memory through `typeperf.exe` and measures host
+  conditions against the Windows host (`host_scope: windows-host` in
+  telemetry). Windows has no RAPL, so energy needs a wall meter.
+- **Apple Silicon:** telemetry reads CPU, GPU, ANE and package power plus GPU
+  residency from `powermetrics`, which needs root. Run `sudo -v` in the same
+  terminal before starting a suite so the harness can use `sudo -n`.
 - **External launches:** start the server with the same flags the harness
   would use. Print them with
 
@@ -345,6 +352,7 @@ kept in the result JSON.
 | Source | Coverage | Label |
 |---|---|---|
 | External wall meter (smart plug or inline meter writing the latest watts to a file; set `BENCH_EXT_POWER_FILE`) | Whole system | `power_source=wall` |
+| `powermetrics` combined power (Apple Silicon) | CPU + GPU + ANE package; excludes display, SSD, PSU losses | `power_source=soc` (a lower bound) |
 | `nvidia-smi` board power + RAPL CPU package power | GPU and CPU package only; excludes RAM, fans, PSU losses | `power_source=gpu+cpu_pkg` (a **lower bound**) |
 
 - Reported values are `mean_power_w`, `peak_power_w` (sampled at 1 Hz; true

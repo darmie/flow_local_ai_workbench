@@ -72,6 +72,9 @@ def window_stats(rows, t0, t1):
     energy_src, watts = "", []
     if col("ext_power_w"):
         energy_src, watts = "wall", col("ext_power_w")
+    elif col("soc_power_w"):
+        # Apple Silicon: CPU + GPU + ANE package power from powermetrics.
+        energy_src, watts = "soc", col("soc_power_w")
     else:
         g, c = col("gpu_power_w"), col("cpu_pkg_power_w")
         if g or c:
