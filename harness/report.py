@@ -40,6 +40,35 @@ def cov(rows, col):
     return round(statistics.stdev(v) / statistics.mean(v), 3)
 
 
+def tokenization_table(out, path):
+    """Phase 2: each flores-<lang> row relative to flores-eng for the same machine,
+    model, platform, profile and condition (identical meaning, different language)."""
+    base_key = lambda r: tuple(r[k] for k in KEY if k != "scenario")
+    eng = {base_key(r): r for r in out if r["scenario"] == "flores-eng"}
+    rows = []
+    for r in out:
+        e = eng.get(base_key(r))
+        if not r["scenario"].startswith("flores-") or not e:
+            continue
+
+        def ratio(col):
+            return round(r[col] / e[col], 3) if r.get(col) and e.get(col) else None
+
+        rows.append({**{k: r[k] for k in KEY if k != "scenario"}, "machine_name": r["machine_name"],
+                     "lang": r["scenario"].removeprefix("flores-"),
+                     "mean_input_tokens": r["mean_input_tokens"], "input_tokens_vs_eng": ratio("mean_input_tokens"),
+                     "c1_ttft_p50_ms": r["c1_ttft_p50_ms"], "ttft_vs_eng": ratio("c1_ttft_p50_ms"),
+                     "capacity_users": r["capacity_users"], "capacity_vs_eng": ratio("capacity_users"),
+                     "peak_output_tok_s": r["peak_output_tok_s"], "peak_vs_eng": ratio("peak_output_tok_s")})
+    if not rows:
+        return
+    with open(path, "w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=list(rows[0]))
+        w.writeheader()
+        w.writerows(rows)
+    print(f"wrote {len(rows)} tokenization rows -> {path}", file=sys.stderr)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("summary")
@@ -75,6 +104,7 @@ def main():
             "c1_ttft_p90_ms": med(c1, "p90_ttft_ms"),
             "c1_tpot_p50_ms": med(c1, "median_tpot_ms"),
             "c1_output_tok_s": med(c1, "output_throughput"),
+            "mean_input_tokens": med(all_pts, "mean_input_tokens"),
             "c1_spec_acceptance_rate": med(c1, "spec_acceptance_rate"),
             "capacity_users": capacity,
             "capacity_output_tok_s": med(cap_rows, "output_throughput"),
@@ -101,6 +131,8 @@ def main():
         w.writeheader()
         w.writerows(out)
     print(f"wrote {len(out)} rows -> {args.out}", file=sys.stderr)
+
+    tokenization_table(out, os.path.join(os.path.dirname(os.path.abspath(args.out)), "tokenization.csv"))
 
     # One row per machine; a machine_id whose spec changed between runs is
     # reported so the operator can give the changed hardware a new id.

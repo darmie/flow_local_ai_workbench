@@ -309,7 +309,35 @@ server is stopped and the top-up is removed.
 8. Writes `manifest.json`: every point with timestamps, the exact
    server/bench commands, condition plans and their verification.
 
-### 5.4 Running the benchmark client elsewhere
+### 5.4 Tokenization premium (Phase 2)
+
+FLORES+ provides the same sentences in every language. The Phase 2 workload
+serves identical passages (8 aligned sentences each) in English, Swahili,
+Yoruba, Hausa, Igbo, isiZulu and isiXhosa, so any difference in input tokens,
+TTFT, KV-cache use and capacity comes from the tokenizer alone.
+
+```bash
+# once: accept the FLORES+ terms on Hugging Face, then
+hf download openlanguagedata/flores_plus --repo-type dataset \
+  --revision 5fec6c13f9e5a4db2f745d4ec0d7c9721ddc4f06 --include "devtest/*_Latn.jsonl"
+SRC=~/.cache/huggingface/hub/datasets--openlanguagedata--flores_plus/snapshots/5fec6c13f9e5a4db2f745d4ec0d7c9721ddc4f06
+python harness/flores.py build --src $SRC                  # -> datasets/flores/*.jsonl (git-ignored)
+python harness/flores.py fertility --src $SRC \
+  --models inkubalm-0.4b,llama3.1-8b-w4a16,qwen3-8b-awq     # -> results/fertility.csv
+
+# serving cost per language, per model (repeat for each model)
+python harness/run_suite.py --model inkubalm-0.4b --platform cpu --scenarios flores
+```
+
+- `fertility.csv` gives tokens per language relative to English for each
+  model's tokenizer (`fertility_vs_eng`), plus characters per token.
+- `report.py` writes `tokenization.csv`: for every non-English `flores-*` row,
+  input tokens, TTFT, capacity and peak throughput relative to `flores-eng`
+  on the same machine, model and condition.
+- The FLORES+ terms forbid re-hosting the text where crawlers can reach it.
+  `datasets/` is git-ignored; never commit or upload the built prompts.
+
+### 5.5 Running the benchmark client elsewhere
 
 On tier-1 machines the benchmark client competes with the model for CPU. The
 client's CPU is counted as harness load (§3.1), not background. For final
@@ -462,7 +490,7 @@ results/<YYYYmmdd-HHMMSS>_<machine>_<model>_<platform>_<profile>/
 |---|---|
 | Thermal throttling on laptops over a long sweep | Repeats in the outer loop; cooldown between points; temperature, clock and throttle telemetry; `flag_unstable` |
 | Prefix-cache reuse across repeats inflating results | Prefix caching off in `baseline`; different seed per repeat |
-| Benchmark client stealing CPU on small machines | Client CPU counted as harness load; LAN-client option (§5.4) |
+| Benchmark client stealing CPU on small machines | Client CPU counted as harness load; LAN-client option (§5.5) |
 | KV cache silently too small on CPU (`VLLM_CPU_KVCACHE_SPACE`) | Set explicitly per tier; `metrics_ready.txt` records block counts; preemptions tracked |
 | Swapping on 16 GB machines | Swap telemetry; `flag_swapped`; memory top-up floor |
 | GPU→CPU offload cliff (model > VRAM) | Measured deliberately in Phase 3 with `--extra-serve-args "--cpu-offload-gb N"`; never mixed into baseline |

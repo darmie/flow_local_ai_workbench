@@ -129,6 +129,9 @@ python harness/run_suite.py --model $M --platform $P --conditions office --no-to
 # 3. Without GPU (GPU machines only; skip if the model does not fit in RAM)
 python harness/run_suite.py --model $M --platform cpu
 
+# Phase 2 (tokenization), only if asked: see METHODOLOGY §5.4
+python harness/run_suite.py --model $M --platform $P --scenarios flores
+
 # 4. Engine profiles, only if the user asks for Phase 4 work
 python harness/run_suite.py --model $M --platform $P --profile prefix-cache
 ```

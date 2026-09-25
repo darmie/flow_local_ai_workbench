@@ -164,6 +164,8 @@ def main():
                                           if row["measured_condition"] else "")
                 row["condition_heavier"] = (bool(row["measured_condition"]) and
                                             order.index(row["measured_condition"]) > order.index(target_cls))
+                if res.get("completed"):
+                    row["mean_input_tokens"] = round(res.get("total_input_tokens", 0) / res["completed"], 1)
                 if row["request_throughput"]:
                     row["goodput_ratio"] = round((row["request_goodput"] or 0) / row["request_throughput"], 3)
                 if row["energy_wh"] and row["total_output_tokens"]:

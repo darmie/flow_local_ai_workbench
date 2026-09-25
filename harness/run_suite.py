@@ -34,6 +34,8 @@ import yaml
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 PORT = 8000
+# BENCH_DATASETS_ROOT: directory that scenario dataset_path values are relative to (default: repo root).
+DATASETS_ROOT = os.environ.get("BENCH_DATASETS_ROOT", ROOT)
 
 
 def cfg(name):
@@ -178,7 +180,10 @@ def bench_cmd(args, server, model, scen, conc, n_prompts, seed, out_dir, fname, 
               "--prefix-repetition-num-prefixes", str(scen["num_prefixes"]),
               "--prefix-repetition-output-len", str(scen["output_len"])]
     elif scen["dataset"] == "custom":
-        a += ["--dataset-name", "custom", "--dataset-path", scen["dataset_path"],
+        path = os.path.join(DATASETS_ROOT, scen["dataset_path"])
+        if args.client == "docker":
+            path = "/workbench/" + scen["dataset_path"]
+        a += ["--dataset-name", "custom", "--dataset-path", path,
               "--custom-output-len", str(scen["output_len"])]
         if model.get("chat_template") is False:
             a += ["--skip-chat-template"]
@@ -188,6 +193,7 @@ def bench_cmd(args, server, model, scen, conc, n_prompts, seed, out_dir, fname, 
     a[a.index("--result-dir") + 1] = "/out"
     return (["docker", "run", "--rm", "--network", "host", "--entrypoint", "vllm",
              "-v", f"{args.hf_cache}:/root/.cache/huggingface", "-v", f"{out_dir}:/out",
+             "-v", f"{os.path.join(DATASETS_ROOT, 'datasets')}:/workbench/datasets:ro",
              "-e", "HF_HUB_OFFLINE=1" if not args.online else "HF_HUB_OFFLINE=0",
              "-e", "CUDA_VISIBLE_DEVICES=", args.client_image] + a)
 
@@ -299,7 +305,7 @@ def scenario_tokens(scen):
     """Prompt + output tokens one request of this scenario needs."""
     if scen["dataset"] == "prefix_repetition":
         return scen["prefix_len"] + scen["suffix_len"] + scen["output_len"]
-    return scen.get("input_len", 0) + scen["output_len"]
+    return scen.get("input_len", scen.get("input_len_hint", 0)) + scen["output_len"]
 
 
 def goodput_ratio(path):
@@ -451,7 +457,9 @@ def main():
                                           "--metrics-url", server.base_url + "/metrics"])
         save()
 
-        scen_names = [s.strip() for s in args.scenarios.split(",") if s.strip()]
+        groups = scenarios_cfg.get("groups", {})
+        scen_names = [n for s in args.scenarios.split(",") if s.strip()
+                      for n in groups.get(s.strip(), [s.strip()])]
         saturated = set()  # (condition, scenario, concurrency) whose goodput collapsed
         for rep in range(args.repeats):
             for target in conditions:
@@ -467,6 +475,10 @@ def main():
                 try:
                     for sname in scen_names:
                         scen = scenarios_cfg["scenarios"][sname]
+                        if scen["dataset"] == "custom" and not os.path.exists(os.path.join(DATASETS_ROOT, scen["dataset_path"])):
+                            if rep == 0:
+                                log(f"skipping {sname}: {scen['dataset_path']} missing (build it with harness/flores.py)")
+                            continue
                         need = max(scen.get("min_model_len", 0), scenario_tokens(scen))
                         if need > args.max_model_len:
                             if rep == 0:

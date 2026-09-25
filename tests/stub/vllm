@@ -52,10 +52,15 @@ def bench(argv):
                   open(os.path.join(get("--result-dir"), get("--result-filename")), "w"))
         return
     time.sleep(1.5)
+    in_tokens = 512
+    if get("--dataset-name") == "custom":
+        # Approximate prompt tokens from characters so languages differ like real fertility.
+        rows = [json.loads(l) for l in open(get("--dataset-path")) if l.strip()]
+        in_tokens = int(sum(len(r["prompt"]) for r in rows) / len(rows) / 4)
     tpot = 20 * (1 + 0.3 * conc) * random.uniform(0.95, 1.05)
-    ttft = 150 * conc * random.uniform(0.95, 1.05)
+    ttft = 150 * conc * in_tokens / 512 * random.uniform(0.95, 1.05)
     dur = n / conc * (ttft + tpot * out_len) / 1000
-    res = {"completed": n, "failed": 0, "duration": dur, "total_input_tokens": n * 512,
+    res = {"completed": n, "failed": 0, "duration": dur, "total_input_tokens": n * in_tokens,
            "total_output_tokens": n * out_len, "request_throughput": n / dur,
            "request_goodput": n / dur * (1.0 if tpot < 150 and ttft < 2000 else 0.2),
            "output_throughput": n * out_len / dur, "max_concurrent_requests": conc}

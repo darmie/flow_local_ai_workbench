@@ -45,4 +45,66 @@ scenarios:
     min_model_len: 16384
     slo: {ttft: 15000, tpot: 200}
 
+
+  # Phase 2: identical FLORES+ passages (8 sentences) in each language; input
+  # length differs only by the tokenizer's fertility. Build with harness/flores.py.
+  flores-eng:
+    use_case: "English (reference) passage, same meaning as every flores-* scenario"
+    dataset: custom
+    dataset_path: datasets/flores/eng_Latn.jsonl
+    input_len_hint: 1024
+    output_len: 128
+    slo: {ttft: 3000, tpot: 150}
+
+  flores-swh:
+    use_case: "Swahili passage, same meaning as every flores-* scenario"
+    dataset: custom
+    dataset_path: datasets/flores/swh_Latn.jsonl
+    input_len_hint: 1024
+    output_len: 128
+    slo: {ttft: 3000, tpot: 150}
+
+  flores-yor:
+    use_case: "Yoruba passage, same meaning as every flores-* scenario"
+    dataset: custom
+    dataset_path: datasets/flores/yor_Latn.jsonl
+    input_len_hint: 1024
+    output_len: 128
+    slo: {ttft: 3000, tpot: 150}
+
+  flores-hau:
+    use_case: "Hausa passage, same meaning as every flores-* scenario"
+    dataset: custom
+    dataset_path: datasets/flores/hau_Latn.jsonl
+    input_len_hint: 1024
+    output_len: 128
+    slo: {ttft: 3000, tpot: 150}
+
+  flores-ibo:
+    use_case: "Igbo passage, same meaning as every flores-* scenario"
+    dataset: custom
+    dataset_path: datasets/flores/ibo_Latn.jsonl
+    input_len_hint: 1024
+    output_len: 128
+    slo: {ttft: 3000, tpot: 150}
+
+  flores-zul:
+    use_case: "isiZulu passage, same meaning as every flores-* scenario"
+    dataset: custom
+    dataset_path: datasets/flores/zul_Latn.jsonl
+    input_len_hint: 1024
+    output_len: 128
+    slo: {ttft: 3000, tpot: 150}
+
+  flores-xho:
+    use_case: "isiXhosa passage, same meaning as every flores-* scenario"
+    dataset: custom
+    dataset_path: datasets/flores/xho_Latn.jsonl
+    input_len_hint: 1024
+    output_len: 128
+    slo: {ttft: 3000, tpot: 150}
+
 default_scenarios: [chat, rag, generate, agent-prefix]
+
+groups:
+  flores: [flores-eng, flores-swh, flores-yor, flores-hau, flores-ibo, flores-zul, flores-xho]
