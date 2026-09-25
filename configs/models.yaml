@@ -1,13 +1,22 @@
 # Model matrix. Keys are the names used on the command line and in results.
-# `hf` is the exact checkpoint; pin `revision` once a model is adopted so every
-# machine benchmarks identical weights.
 #
-# Cross-mode (GPU vs CPU) comparisons must use a checkpoint that runs on both
-# backends: bf16, AWQ, GPTQ, or INT8 W8A8. FP8 does not run on x86 CPU.
+# hf / revision   exact checkpoint and commit; every machine benchmarks identical weights
+# gated           needs `hf auth login` and an accepted licence before `hf download`
+# max_model_len   cap below the tier's context length (the model's own limit)
+# serve_args      extra vLLM flags this model always needs
+# chat_template   false for base models without one (bench skips the template)
+# speculator      EAGLE3 draft head used by the `spec-eagle3` profile
+# tool_call_parser / reasoning_parser   used by the `agentic` profile (Garden)
+#
+# Cross-mode (GPU vs CPU) comparisons need a checkpoint that runs on both
+# backends: bf16, AWQ, GPTQ or INT8 W8A8. FP8 does not run on x86 CPU.
 
 models:
+  # --- 3-4B: minimal tier -------------------------------------------------
   llama3.2-3b:
     hf: meta-llama/Llama-3.2-3B-Instruct
+    revision: 0cb88a4f764b7a12671c53f0838cd831a0843b95
+    gated: true
     quant: bf16
     params_b: 3.2
     tiers: [t1-minimal, t2-entry-dgpu]
@@ -15,6 +24,7 @@ models:
 
   llama3.2-3b-w8a8:
     hf: RedHatAI/Llama-3.2-3B-Instruct-quantized.w8a8
+    revision: 505dad2e5ceed6c787249c634a05f2d6cf8ad9e4
     quant: int8-w8a8
     params_b: 3.2
     tiers: [t1-minimal]
@@ -23,52 +33,146 @@ models:
   phi4-mini-ov:
     # OpenVINO backend only (Iris Xe / CPU); not loadable by stock vLLM.
     hf: OpenVINO/Phi-4-mini-instruct-int4-ov
+    revision: e5813af02e8560a9186c41f932f21cbb584a0907
     quant: int4-ov
     params_b: 3.8
     tiers: [t1-minimal]
     platforms: [openvino]
 
+  phi4-mini-w4a16:
+    # No first-party 4-bit Phi-4-mini exists; this is AMD's llm-compressor build.
+    hf: amd/Phi-4-mini-instruct-w4a16-llmcompressor
+    revision: 9cf2a568ef9d491718ebe32252b2c60d790f6dd3
+    quant: w4a16
+    params_b: 3.8
+    tiers: [t1-minimal, t2-entry-dgpu]
+    status: experimental
+
+  # --- African-language model (Phase 2) ------------------------------------
+  inkubalm-0.4b:
+    # Base model (no chat template), Llama architecture served natively by vLLM;
+    # licence CC BY-NC 4.0. Not usable for Garden (no tool calling).
+    hf: lelapa/InkubaLM-0.4B
+    revision: 95db0f1342e83a95cd1d891509643e0c436ee88b
+    gated: true
+    quant: bf16
+    params_b: 0.4
+    max_model_len: 2048
+    chat_template: false
+    tiers: [t1-minimal, t2-entry-dgpu]
+
+  # --- 7-8B: entry dGPU -----------------------------------------------------
+  mistral7b-v0.3-w4a16:
+    hf: RedHatAI/Mistral-7B-Instruct-v0.3-quantized.w4a16
+    revision: aff481973dbd56b97c6538e06556fb5e3dab939e
+    quant: gptq-w4
+    params_b: 7.2
+    tiers: [t1-minimal, t2-entry-dgpu]
+    tool_call_parser: mistral
+
   llama3.1-8b-w4a16:
     hf: RedHatAI/Meta-Llama-3.1-8B-Instruct-quantized.w4a16
+    revision: 6a426ef8adc0b4b96408001a9628d71f01c9ceca
     quant: w4a16
     params_b: 8.0
     tiers: [t1-minimal, t2-entry-dgpu]
     tool_call_parser: llama3_json
+    speculator: {hf: RedHatAI/Llama-3.1-8B-Instruct-speculator.eagle3,
+                 revision: f4fa34a8f803a0ba75d048d6b3dbc1ad5149e9ac}
 
   llama3.1-8b-w8a8:
     hf: RedHatAI/Meta-Llama-3.1-8B-Instruct-quantized.w8a8
+    revision: 024e24cbe4153670f747383ea3265d0fb197c727
     quant: int8-w8a8
     params_b: 8.0
     tiers: [t1-minimal, t2-entry-dgpu]
     tool_call_parser: llama3_json
+    speculator: {hf: RedHatAI/Llama-3.1-8B-Instruct-speculator.eagle3,
+                 revision: f4fa34a8f803a0ba75d048d6b3dbc1ad5149e9ac}
 
   qwen3-8b-awq:
     hf: Qwen/Qwen3-8B-AWQ
+    revision: 4da05a8edb55c6046cce958586c33b61da07bb79
     quant: awq
     params_b: 8.2
     tiers: [t1-minimal, t2-entry-dgpu]
     tool_call_parser: hermes
     reasoning_parser: qwen3
+    speculator: {hf: RedHatAI/Qwen3-8B-speculator.eagle3,
+                 revision: 08610ffa01dd9f16731fe8f627b85905b6aa51c4}
+
+  # --- 12-14B: mid-tier ------------------------------------------------------
+  gemma3-12b-w4a16:
+    # Multimodal architecture; image inputs disabled to keep memory for text.
+    hf: RedHatAI/gemma-3-12b-it-quantized.w4a16
+    revision: 700b3cfd55276c9e404d97680ddd29e4fa18e9f5
+    quant: w4a16
+    params_b: 12.2
+    tiers: [t2-entry-dgpu, t3-pro]
+    serve_args: ["--limit-mm-per-prompt", '{"image": 0}']
+
+  qwen2.5-14b-awq:
+    hf: Qwen/Qwen2.5-14B-Instruct-AWQ
+    revision: 539535859b135b0244c91f3e59816150c8056698
+    quant: awq
+    params_b: 14.8
+    tiers: [t2-entry-dgpu, t3-pro]
+    tool_call_parser: hermes
 
   qwen3-14b-awq:
     hf: Qwen/Qwen3-14B-AWQ
+    revision: 31c69efc29464b6bb0aee1398b5a7b50a99340c3
     quant: awq
     params_b: 14.8
     tiers: [t2-entry-dgpu, t3-pro]
     tool_call_parser: hermes
     reasoning_parser: qwen3
+    speculator: {hf: RedHatAI/Qwen3-14B-speculator.eagle3,
+                 revision: 2d489f5a8e490507e4fba701a5515e291f211fdc}
+
+  # --- 32B: pro workstation -------------------------------------------------
+  qwen2.5-32b-awq:
+    hf: Qwen/Qwen2.5-32B-Instruct-AWQ
+    revision: 5c7cb76a268fc6cfbb9c4777eb24ba6e27f9ee6c
+    quant: awq
+    params_b: 32.8
+    tiers: [t3-pro, t4-multi-gpu]
+    tool_call_parser: hermes
 
   qwen3-32b-awq:
     hf: Qwen/Qwen3-32B-AWQ
+    revision: 0499c3ac83fdef8810b907a23894ba91e95eddd8
     quant: awq
     params_b: 32.8
     tiers: [t3-pro, t4-multi-gpu]
     tool_call_parser: hermes
     reasoning_parser: qwen3
+    speculator: {hf: RedHatAI/Qwen3-32B-speculator.eagle3,
+                 revision: dc84fe7ff1db31efa824776f49c141fc8195eb47}
 
+  deepseek-r1-distill-32b-w4a16:
+    hf: RedHatAI/DeepSeek-R1-Distill-Qwen-32B-quantized.w4a16
+    revision: f3572d23e9bc8dc194f361cfaf9ab73383e9125a
+    quant: w4a16
+    params_b: 32.8
+    tiers: [t3-pro, t4-multi-gpu]
+    reasoning_parser: deepseek_r1
+
+  # --- 70B+: enterprise UMA / multi-GPU --------------------------------------
   llama3.3-70b-w4a16:
     hf: RedHatAI/Llama-3.3-70B-Instruct-quantized.w4a16
+    revision: da23851b92f5ea8023d6c70f790feb8e05269812
     quant: w4a16
     params_b: 70.6
     tiers: [t3-pro, t4-multi-gpu]
     tool_call_parser: llama3_json
+    speculator: {hf: RedHatAI/Llama-3.3-70B-Instruct-speculator.eagle3,
+                 revision: 42864f78d503693ae5fd317419f099ab3b7c13e4}
+
+  qwen2.5-72b-awq:
+    hf: Qwen/Qwen2.5-72B-Instruct-AWQ
+    revision: 698703eae6604af048a3d2f509995dc302088217
+    quant: awq
+    params_b: 72.7
+    tiers: [t3-pro, t4-multi-gpu]
+    tool_call_parser: hermes

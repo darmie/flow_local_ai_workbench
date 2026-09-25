@@ -70,7 +70,12 @@ class Server:
         m, p = self.model, self.profile
         a = [m["hf"], "--served-model-name", self.args.model, "--port", str(PORT),
              "--max-model-len", str(self.args.max_model_len)]
-        a += self.plat.get("serve_args", []) + p.get("serve_args", [])
+        a += self.plat.get("serve_args", []) + m.get("serve_args", []) + p.get("serve_args", [])
+        if p.get("needs_speculator"):
+            spec = m["speculator"]
+            a += ["--speculative-config", json.dumps({
+                "method": "eagle3", "model": spec["hf"], "revision": spec.get("revision"),
+                "num_speculative_tokens": p.get("num_speculative_tokens", 3)})]
         if p.get("needs_tool_parser") and m.get("tool_call_parser"):
             a += ["--tool-call-parser", m["tool_call_parser"]]
         if p.get("needs_tool_parser") and m.get("reasoning_parser"):
@@ -137,9 +142,24 @@ class Server:
             subprocess.run(["docker", "rm", "-f", self.name], capture_output=True)
 
 
+def snapshot_dir(hf_cache, repo, revision):
+    """HF cache path of a pinned snapshot (hub/models--org--name/snapshots/<sha>)."""
+    return os.path.join(hf_cache, "hub", "models--" + repo.replace("/", "--"), "snapshots", revision)
+
+
+def tokenizer_ref(args, model):
+    """Pinned local snapshot when downloaded, so the offline client tokenizes with
+    exactly the served revision; otherwise the repo id."""
+    if model.get("revision") and os.path.isdir(snapshot_dir(args.hf_cache, model["hf"], model["revision"])):
+        root = "/root/.cache/huggingface" if args.client == "docker" else args.hf_cache
+        return snapshot_dir(root, model["hf"], model["revision"])
+    return model["hf"]
+
+
 def bench_cmd(args, server, model, scen, conc, n_prompts, seed, out_dir, fname, meta):
     a = ["bench", "serve", "--backend", "openai", "--endpoint", "/v1/completions",
-         "--base-url", server.base_url, "--model", model["hf"], "--served-model-name", args.model,
+         "--base-url", server.base_url, "--model", model["hf"], "--tokenizer", tokenizer_ref(args, model),
+         "--served-model-name", args.model,
          "--num-prompts", str(n_prompts), "--max-concurrency", str(conc), "--request-rate", "inf",
          "--num-warmups", str(conc), "--seed", str(seed), "--ignore-eos", "--temperature", "0",
          "--percentile-metrics", "ttft,tpot,itl,e2el", "--metric-percentiles", "50,90,95,99",
@@ -158,6 +178,8 @@ def bench_cmd(args, server, model, scen, conc, n_prompts, seed, out_dir, fname, 
     elif scen["dataset"] == "custom":
         a += ["--dataset-name", "custom", "--dataset-path", scen["dataset_path"],
               "--custom-output-len", str(scen["output_len"])]
+        if model.get("chat_template") is False:
+            a += ["--skip-chat-template"]
     if args.client == "local":
         return ["vllm"] + a
     # Containerised client: same image as the server, results written via a bind mount.
@@ -293,6 +315,8 @@ def main():
     ap.add_argument("--notes", default="")
     ap.add_argument("--print-serve-args", action="store_true",
                     help="print the vLLM serve arguments for this config and exit (for external launches)")
+    ap.add_argument("--print-download", action="store_true",
+                    help="print the `hf download` commands for this model (and its speculator) and exit")
     ap.add_argument("--serve-only", action="store_true",
                     help="start the server with this config and keep it up until Ctrl-C (for Garden runs)")
     args = ap.parse_args()
@@ -303,7 +327,15 @@ def main():
     profile = profiles[args.profile]
     if model.get("platforms") and args.platform not in model["platforms"]:
         sys.exit(f"{args.model} only runs on {model['platforms']}")
-    args.max_model_len = args.max_model_len or tier["max_model_len"]
+    args.max_model_len = args.max_model_len or min(tier["max_model_len"], model.get("max_model_len", 1 << 30))
+    if profile.get("needs_tool_parser") and not model.get("tool_call_parser"):
+        sys.exit(f"{args.model} has no tool_call_parser; it cannot serve the '{args.profile}' profile")
+    if profile.get("needs_speculator") and not model.get("speculator"):
+        sys.exit(f"{args.model} has no speculator in models.yaml; '{args.profile}' needs one")
+    if args.print_download:
+        for repo in filter(None, [model, model.get("speculator")]):
+            print(shlex.join(["hf", "download", repo["hf"]] + (["--revision", repo["revision"]] if repo.get("revision") else [])))
+        return
     args.client_image = plat.get("image", "vllm/vllm-openai-cpu:v0.30.0-x86_64")
     if plat.get("launch") == "external" and args.client == "docker":
         args.client_image = plats["platforms"]["cpu"]["image"]

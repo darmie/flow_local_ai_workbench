@@ -47,7 +47,7 @@ Agentic workloads run through Garden and are covered in
 | Hardware tier | `t1-minimal`, `t2-entry-dgpu`, `t3-pro`, `t4-multi-gpu` | `configs/tiers.yaml`, `--tier` |
 | Compute mode | `gpu` (CUDA / ROCm / Metal), `cpu`, `igpu` (OpenVINO on Iris Xe) | `--platform` (`configs/platforms.yaml`) |
 | Model + quantisation | e.g. `qwen3-8b-awq`, `llama3.2-3b` | `--model` (`configs/models.yaml`) |
-| Engine profile | `baseline`, `prefix-cache`, `fp8-kv`, `interactive`, `spec-ngram`, `agentic` | `--profile` (`configs/engine_profiles.yaml`) |
+| Engine profile | `baseline`, `prefix-cache`, `fp8-kv`, `interactive`, `spec-ngram`, `spec-eagle3`, `agentic` | `--profile` (`configs/engine_profiles.yaml`) |
 | Workload scenario | `chat`, `rag`, `generate`, `agent-prefix`, `longctx` | `--scenarios` (`configs/scenarios.yaml`) |
 | Request load | concurrent users: 1, 2, 4 … (sweep set by the tier) | `--concurrency` or the tier default |
 | Host condition | `quiet`, `office`, `heavy` | `--conditions` (`configs/conditions.yaml`) |
@@ -188,11 +188,19 @@ If the hardware changes (RAM upgrade, GPU swap), give the machine a new
 
 ### 4.2 Download models once (online), then run offline
 
+Every model in `configs/models.yaml` is pinned to a commit (`revision`). Download
+exactly that commit; the harness prints the commands:
+
 ```bash
 pip install -U "huggingface_hub[cli]"
-hf download Qwen/Qwen3-8B-AWQ           # repeat for each model in your tier
-hf download meta-llama/Llama-3.2-3B-Instruct   # gated: needs `hf auth login` + accepted licence
+python harness/run_suite.py --model qwen3-8b-awq --platform cuda --print-download
+# hf download Qwen/Qwen3-8B-AWQ --revision 4da05a8e...
+# (plus the EAGLE3 draft head when you add --profile spec-eagle3)
 ```
+
+Models marked `gated: true` (Llama 3.2 3B, InkubaLM) need `hf auth login` and
+an accepted licence on the model page first. The benchmark client tokenizes
+from the same pinned snapshot, so runs stay offline.
 
 ### 4.3 Per platform
 
@@ -259,7 +267,7 @@ python harness/run_suite.py --model $M --platform cuda --conditions office,heavy
 python harness/run_suite.py --model $M --platform cpu
 
 # 4. Engine profiles (Phase 4), quiet, on the machine chosen in Phase 3
-for P in prefix-cache fp8-kv interactive spec-ngram; do
+for P in prefix-cache fp8-kv interactive spec-ngram spec-eagle3; do
   python harness/run_suite.py --model $M --platform cuda --profile $P
 done
 
@@ -462,8 +470,8 @@ results/<YYYYmmdd-HHMMSS>_<machine>_<model>_<platform>_<profile>/
 
 | Phase | Runs |
 |---|---|
-| 1. Infrastructure baseline (tier 1) | `llama3.2-3b`, `llama3.1-8b-w8a8`, `phi4-mini-ov` on `cpu` and `openvino` (CPU and GPU), quiet + office; Garden `plan-rollout` task |
-| 2. Tokenization | `custom` dataset scenarios from parallel FLORES-200 text; Garden `swahili-reply`, `yoruba-classify` |
-| 3. UMA vs discrete GPU | 14B–70B on `cuda` / `rocm` / `metal`, all scenarios incl. `longctx`, plus deliberate offload runs |
-| 4. Engine optimisation | Every profile in `engine_profiles.yaml` vs `baseline` on the Phase 3 winner |
+| 1. Infrastructure baseline (tier 1) | `llama3.2-3b`, `phi4-mini-w4a16`, `mistral7b-v0.3-w4a16`, `llama3.1-8b-w8a8`, `phi4-mini-ov` on `cpu` and `openvino` (CPU and GPU), quiet + office; Garden `plan-rollout` task |
+| 2. Tokenization | `inkubalm-0.4b` vs `llama3.1-8b-w4a16` / `qwen3-8b-awq` on the FLORES+ scenarios; Garden `swahili-reply`, `yoruba-classify` |
+| 3. UMA vs discrete GPU | `gemma3-12b-w4a16`, `qwen2.5-14b-awq`, `qwen3-14b-awq`, the 32B set (`qwen2.5-32b-awq`, `qwen3-32b-awq`, `deepseek-r1-distill-32b-w4a16`) and 70B+ (`llama3.3-70b-w4a16`, `qwen2.5-72b-awq`) on `cuda` / `rocm` / `metal`, all scenarios incl. `longctx`, plus deliberate offload runs |
+| 4. Engine optimisation | Every profile in `engine_profiles.yaml` vs `baseline` on the Phase 3 winner; `spec-eagle3` reports acceptance rate and mean accepted length |
 | 5. Environmental stress | `heavy` condition, Garden runs at parallel 2–4, wall-meter power |

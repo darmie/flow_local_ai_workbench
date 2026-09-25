@@ -22,6 +22,12 @@ profiles:
     serve_args: ["--enable-prefix-caching", "--seed", "0",
                  "--speculative-config", '{"method": "ngram", "num_speculative_tokens": 4, "prompt_lookup_max": 4}']
 
+  spec-eagle3:
+    # EAGLE3 draft head from the model's `speculator` entry; GPU platforms only.
+    serve_args: ["--enable-prefix-caching", "--seed", "0"]
+    needs_speculator: true
+    num_speculative_tokens: 3
+
   agentic:
     # Used for Garden runs: tool calling on, prefix caching on (agents resend long prefixes).
     serve_args: ["--enable-prefix-caching", "--enable-auto-tool-choice", "--seed", "0"]

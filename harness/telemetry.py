@@ -39,6 +39,7 @@ FIELDS = [
     "vllm_running", "vllm_waiting", "vllm_kv_cache_usage", "vllm_preemptions_total",
     "vllm_prefix_cache_hits_total", "vllm_prefix_cache_queries_total",
     "vllm_prompt_tokens_total", "vllm_generation_tokens_total",
+    "vllm_spec_drafts_total", "vllm_spec_draft_tokens_total", "vllm_spec_accepted_tokens_total",
     "ane_power_w", "soc_power_w", "ext_power_w",
 ]
 
@@ -52,6 +53,9 @@ VLLM_METRICS = {
     "vllm_prefix_cache_queries_total": ["vllm:prefix_cache_queries_total", "vllm:gpu_prefix_cache_queries_total"],
     "vllm_prompt_tokens_total": ["vllm:prompt_tokens_total"],
     "vllm_generation_tokens_total": ["vllm:generation_tokens_total"],
+    "vllm_spec_drafts_total": ["vllm:spec_decode_num_drafts_total"],
+    "vllm_spec_draft_tokens_total": ["vllm:spec_decode_num_draft_tokens_total"],
+    "vllm_spec_accepted_tokens_total": ["vllm:spec_decode_num_accepted_tokens_total"],
 }
 
 

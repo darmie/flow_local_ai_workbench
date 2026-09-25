@@ -84,6 +84,13 @@ def window_stats(rows, t0, t1):
             c += [0.0] * (n - len(c))
             watts = [a + b for a, b in zip(g, c)]
     throttled = [r.get("gpu_throttle_reasons", "") for r in rows]
+
+    def delta(name):
+        v = col(name)
+        return v[-1] - v[0] if len(v) >= 2 else None
+
+    drafts, draft_tok, accepted = (delta("vllm_spec_drafts_total"), delta("vllm_spec_draft_tokens_total"),
+                                   delta("vllm_spec_accepted_tokens_total"))
     bg_cpu, swap_in = col("bg_cpu_pct"), col("swap_in_mb_s")
     measured = classify(statistics.median(bg_cpu), None, statistics.median(swap_in) if swap_in else 0,
                         CONDITIONS["classes"]) if bg_cpu else ""
@@ -107,6 +114,8 @@ def window_stats(rows, t0, t1):
         "peak_power_w": round(max(watts), 2) if watts else "",
         "energy_wh": round(sum(watts) / 3600, 4) if watts else "",  # 1 Hz samples
         "gpu_throttled": any(_is_throttled(t) for t in throttled),
+        "spec_acceptance_rate": round(accepted / draft_tok, 3) if draft_tok and accepted is not None else "",
+        "spec_mean_accepted_len": round(1 + accepted / drafts, 2) if drafts and accepted is not None else "",
     }
 
 

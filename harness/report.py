@@ -75,6 +75,7 @@ def main():
             "c1_ttft_p90_ms": med(c1, "p90_ttft_ms"),
             "c1_tpot_p50_ms": med(c1, "median_tpot_ms"),
             "c1_output_tok_s": med(c1, "output_throughput"),
+            "c1_spec_acceptance_rate": med(c1, "spec_acceptance_rate"),
             "capacity_users": capacity,
             "capacity_output_tok_s": med(cap_rows, "output_throughput"),
             "capacity_tpot_p90_ms": med(cap_rows, "p90_tpot_ms"),
