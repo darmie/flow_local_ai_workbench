@@ -9,6 +9,7 @@ import argparse
 import csv
 import os
 import statistics
+import sys
 from collections import defaultdict
 
 KEY = ["machine_id", "tier", "model", "quant", "platform", "mode", "engine_profile",
@@ -92,13 +93,13 @@ def main():
         })
 
     if not out:
-        print("no ok points in summary")
+        print("no ok points in summary", file=sys.stderr)
         return
     with open(args.out, "w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=list(out[0]))
         w.writeheader()
         w.writerows(out)
-    print(f"wrote {len(out)} rows -> {args.out}")
+    print(f"wrote {len(out)} rows -> {args.out}", file=sys.stderr)
 
     # One row per machine; a machine_id whose spec changed between runs is
     # reported so the operator can give the changed hardware a new id.
@@ -114,7 +115,7 @@ def main():
         w = csv.DictWriter(fh, fieldnames=["machine_id", "tier"] + MACHINE_COLS)
         w.writeheader()
         w.writerows(machines.values())
-    print(f"wrote {len(machines)} machines -> {mpath}")
+    print(f"wrote {len(machines)} machines -> {mpath}", file=sys.stderr)
 
     if args.md:
         mcols = ["machine_id", "tier", "spec_machine_name", "spec_cpu_model", "spec_cpu_cores", "spec_ram_gb",

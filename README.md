@@ -9,6 +9,8 @@ Halo. Agentic workloads are evaluated through
 - **[docs/METHODOLOGY.md](docs/METHODOLOGY.md)**: variables, host conditions (quiet vs under load),
   GPU vs CPU arms, procedure, metrics, SLOs, pitfalls. Start here.
 - **[docs/GARDEN_AGENTIC.md](docs/GARDEN_AGENTIC.md)**: agent task success, latency and token cost via Garden.
+- **[AGENTS.md](AGENTS.md)**: operating procedure for AI coding agents asked to run the benchmark on a
+  machine and write its report.
 
 ## Quick start
 

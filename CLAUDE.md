@@ -107,3 +107,7 @@ the same rule as pushing code.
 **Closing.** Close an issue when the work lands, and say in the commit message
 which issue it closes. Do not close one because it looks stale — reopen or
 comment instead.
+
+## Running benchmarks
+
+@AGENTS.md
