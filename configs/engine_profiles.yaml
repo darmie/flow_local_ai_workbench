@@ -11,19 +11,22 @@ profiles:
     serve_args: ["--enable-prefix-caching", "--performance-mode", "balanced", "--seed", "0"]
 
   fp8-kv:
-    # GPU only (Ada/Hopper/ROCm).
+    # Ada/Hopper/ROCm.
+    gpu_only: true
     serve_args: ["--enable-prefix-caching", "--kv-cache-dtype", "fp8", "--seed", "0"]
 
   interactive:
     serve_args: ["--enable-prefix-caching", "--performance-mode", "interactivity", "--seed", "0"]
 
   spec-ngram:
-    # Draft-free speculative decoding; model-specific EAGLE/MTP configs are added per model.
+    # Draft-free speculative decoding. The rejection sampler needs Triton, which the CPU build lacks.
+    gpu_only: true
     serve_args: ["--enable-prefix-caching", "--seed", "0",
                  "--speculative-config", '{"method": "ngram", "num_speculative_tokens": 4, "prompt_lookup_max": 4}']
 
   spec-eagle3:
-    # EAGLE3 draft head from the model's `speculator` entry; GPU platforms only.
+    # EAGLE3 draft head from the model's `speculator` entry.
+    gpu_only: true
     serve_args: ["--enable-prefix-caching", "--seed", "0"]
     needs_speculator: true
     num_speculative_tokens: 3

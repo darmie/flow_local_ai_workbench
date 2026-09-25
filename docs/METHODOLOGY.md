@@ -207,7 +207,7 @@ from the same pinned snapshot, so runs stay offline.
 | Platform | Setup | Launch |
 |---|---|---|
 | `cuda` (RTX 40xx) | NVIDIA driver + NVIDIA Container Toolkit; `docker pull vllm/vllm-openai:v0.30.0` | managed by harness |
-| `cpu` (any x86-64, Linux) | Docker; `docker pull vllm/vllm-openai-cpu:v0.30.0-x86_64` | managed by harness |
+| `cpu` (any x86-64, Linux) | Docker; `docker pull vllm/vllm-openai-cpu:v0.30.0-x86_64`. Prefer the image: the native CPU wheel needs glibc ≥ 2.39, `libnuma1`, tcmalloc and a CPU build of torch | managed by harness |
 | `rocm` (Strix Halo gfx1151, Radeon) | ROCm ≥ 7.0.2 on the host; `docker pull vllm/vllm-openai-rocm:v0.30.0` | managed by harness |
 | `openvino` (Iris Xe / Intel CPU) | Build [vllm-openvino](https://github.com/vllm-project/vllm-openvino) in a venv (`VLLM_TARGET_DEVICE=empty pip install .`) | external: `VLLM_OPENVINO_DEVICE=GPU vllm serve <model> --port 8000 …` |
 | `metal` (Apple Silicon) | Install [vllm-metal](https://github.com/vllm-project/vllm-metal) (Homebrew tap) | external: `vllm serve mlx-community/<model> --port 8000 …` |
@@ -298,9 +298,15 @@ server is stopped and the top-up is removed.
    - Warm-up requests are equal to the concurrency.
    - Repeats form the outermost loop, so slow drift (thermals, background
      changes) shows up as spread rather than as bias against one scenario.
-6. Stops sweeping a scenario once it saturates: the point fails, or fewer than
-   25% of its requests meet the SLO. Higher concurrency would only fail slower.
-7. Writes `manifest.json`: every point with timestamps, the exact
+6. Gives each point a status from its result file: `ok`, `partial` (some
+   requests failed) or `failed` (bench error, or no request completed;
+   `vllm bench serve` itself exits 0 in that case). Only `ok` points feed the
+   headline numbers. A suite with any failed point exits with status 2.
+7. Skips a scenario whose prompt + output does not fit the server's context
+   length (read from `/v1/models` for external servers), and stops sweeping a
+   scenario once it saturates: the point is not `ok`, or fewer than 25% of its
+   requests meet the SLO. Higher concurrency would only fail slower.
+8. Writes `manifest.json`: every point with timestamps, the exact
    server/bench commands, condition plans and their verification.
 
 ### 5.4 Running the benchmark client elsewhere
@@ -460,6 +466,7 @@ results/<YYYYmmdd-HHMMSS>_<machine>_<model>_<platform>_<profile>/
 | KV cache silently too small on CPU (`VLLM_CPU_KVCACHE_SPACE`) | Set explicitly per tier; `metrics_ready.txt` records block counts; preemptions tracked |
 | Swapping on 16 GB machines | Swap telemetry; `flag_swapped`; memory top-up floor |
 | GPU→CPU offload cliff (model > VRAM) | Measured deliberately in Phase 3 with `--extra-serve-args "--cpu-offload-gb N"`; never mixed into baseline |
+| Server counters include warm-up requests | Telemetry deltas per point (prefix-cache hits, spec-decode acceptance) include the point's warm-up requests; per-request latency and throughput from the bench result do not |
 | Plugin version skew (OpenVINO, Metal) | Compared only within their own platform; plugin commit in `--notes` |
 | Background load changing mid-run | Per-point measured condition; mismatches reported under the measured class |
 | Driver or power-limit differences between "identical" GPUs | Driver, power limit and PCIe link recorded in fingerprint |

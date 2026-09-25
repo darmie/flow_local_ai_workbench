@@ -150,6 +150,8 @@ def snapshot_dir(hf_cache, repo, revision):
 def tokenizer_ref(args, model):
     """Pinned local snapshot when downloaded, so the offline client tokenizes with
     exactly the served revision; otherwise the repo id."""
+    if model.get("tokenizer"):
+        return model["tokenizer"]
     if model.get("revision") and os.path.isdir(snapshot_dir(args.hf_cache, model["hf"], model["revision"])):
         root = "/root/.cache/huggingface" if args.client == "docker" else args.hf_cache
         return snapshot_dir(root, model["hf"], model["revision"])
@@ -158,8 +160,8 @@ def tokenizer_ref(args, model):
 
 def bench_cmd(args, server, model, scen, conc, n_prompts, seed, out_dir, fname, meta):
     a = ["bench", "serve", "--backend", "openai", "--endpoint", "/v1/completions",
-         "--base-url", server.base_url, "--model", model["hf"], "--tokenizer", tokenizer_ref(args, model),
-         "--served-model-name", args.model,
+         # --model is the served name so /tokenize and requests resolve; tokenizer comes from the pinned snapshot.
+         "--base-url", server.base_url, "--model", args.model, "--tokenizer", tokenizer_ref(args, model),
          "--num-prompts", str(n_prompts), "--max-concurrency", str(conc), "--request-rate", "inf",
          "--num-warmups", str(conc), "--seed", str(seed), "--ignore-eos", "--temperature", "0",
          "--percentile-metrics", "ttft,tpot,itl,e2el", "--metric-percentiles", "50,90,95,99",
@@ -277,6 +279,29 @@ class RemoteCondition:
             self.active = False
 
 
+def point_status(rc, path):
+    """ok | partial (some requests failed) | failed (bench error or no request completed).
+    `vllm bench serve` exits 0 even when every request fails, so the result file decides."""
+    if rc != 0 or not os.path.exists(path):
+        return "failed", f"exit code {rc}" if rc else "no result file"
+    try:
+        r = json.load(open(path))
+    except ValueError:
+        return "failed", "unreadable result file"
+    if not r.get("completed"):
+        return "failed", "no request completed"
+    if r.get("failed"):
+        return "partial", f"{r['failed']} of {r['completed'] + r['failed']} requests failed"
+    return "ok", ""
+
+
+def scenario_tokens(scen):
+    """Prompt + output tokens one request of this scenario needs."""
+    if scen["dataset"] == "prefix_repetition":
+        return scen["prefix_len"] + scen["suffix_len"] + scen["output_len"]
+    return scen.get("input_len", 0) + scen["output_len"]
+
+
 def goodput_ratio(path):
     try:
         r = json.load(open(path))
@@ -330,6 +355,8 @@ def main():
     args.max_model_len = args.max_model_len or min(tier["max_model_len"], model.get("max_model_len", 1 << 30))
     if profile.get("needs_tool_parser") and not model.get("tool_call_parser"):
         sys.exit(f"{args.model} has no tool_call_parser; it cannot serve the '{args.profile}' profile")
+    if profile.get("gpu_only") and plat["mode"] != "gpu":
+        sys.exit(f"profile '{args.profile}' needs a GPU platform")
     if profile.get("needs_speculator") and not model.get("speculator"):
         sys.exit(f"{args.model} has no speculator in models.yaml; '{args.profile}' needs one")
     if args.print_download:
@@ -374,7 +401,7 @@ def main():
         "run_id": run_id, "machine_id": machine, "tier": args.tier, "model": args.model,
         "model_label": model["hf"], "quant": model["quant"], "params_b": model.get("params_b"),
         "platform": args.platform, "mode": plat["mode"], "engine_profile": args.profile,
-        "vllm_version": plats["vllm_version"], "vllm_image": plat.get("image", "external"),
+        "vllm_version": plats["vllm_version"], "vllm_image": "external" if args.base_url else plat.get("image", "external"),
         "harness_commit": fp["software"].get("harness_commit"),
         "harness_dirty": fp["software"].get("harness_dirty"),
         "max_model_len": args.max_model_len, "repeats": args.repeats,
@@ -393,6 +420,14 @@ def main():
     try:
         manifest["startup_s"] = round(server.start(), 1)
         manifest["serve_cmd"] = server.cmd
+        if not server.managed:
+            # An external server's real context limit decides which scenarios fit.
+            try:
+                served = json.load(urllib.request.urlopen(server.base_url + "/v1/models", timeout=5))["data"][0]
+                if served.get("max_model_len"):
+                    args.max_model_len = manifest["max_model_len"] = served["max_model_len"]
+            except (OSError, ValueError, KeyError, IndexError):
+                pass
         if args.serve_only:
             save()
             log(f"serving {args.model} at {server.base_url}/v1 (Ctrl-C to stop)")
@@ -432,7 +467,10 @@ def main():
                 try:
                     for sname in scen_names:
                         scen = scenarios_cfg["scenarios"][sname]
-                        if scen.get("min_model_len", 0) > args.max_model_len:
+                        need = max(scen.get("min_model_len", 0), scenario_tokens(scen))
+                        if need > args.max_model_len:
+                            if rep == 0:
+                                log(f"skipping {sname}: needs {need} tokens, server max_model_len is {args.max_model_len}")
                             continue
                         for conc in sweep:
                             if any(k[:2] == (target, sname) and k[2] <= conc for k in saturated):
@@ -448,15 +486,21 @@ def main():
                             with open(os.path.join(run_dir, "bench.log"), "a") as blog:
                                 blog.write(f"\n$ {shlex.join(cmd)}\n")
                                 blog.flush()
-                                rc = subprocess.run(cmd, stdout=blog, stderr=subprocess.STDOUT).returncode
+                                rc = subprocess.run(cmd, stdout=blog, stderr=subprocess.STDOUT,
+                                                    env=dict(os.environ, HF_HUB_OFFLINE="0" if args.online else "1")
+                                                    ).returncode
                             t1 = time.time()
-                            ok = rc == 0 and os.path.exists(os.path.join(run_dir, fname))
+                            status, reason = point_status(rc, os.path.join(run_dir, fname))
                             manifest["points"].append({
                                 "condition": target, "scenario": sname, "concurrency": conc, "repeat": rep,
                                 "num_prompts": n, "t_start": t0, "t_end": t1, "exit_code": rc,
-                                "status": "ok" if ok else "failed", "result_file": fname})
+                                "status": status, "reason": reason, "result_file": fname})
                             save()
-                            if not ok or goodput_ratio(os.path.join(run_dir, fname)) < 0.25:
+                            if status != "ok":
+                                saturated.add((target, sname, conc))
+                                log(f"  {sname} c={conc} {status.upper()}: {reason} (see bench.log); "
+                                    f"skipping higher concurrency")
+                            elif goodput_ratio(os.path.join(run_dir, fname)) < 0.25:
                                 saturated.add((target, sname, conc))
                                 log(f"  {sname} saturated at c={conc}; skipping higher concurrency")
                             time.sleep(args.cooldown)
@@ -479,6 +523,10 @@ def main():
         save()
     log(f"done: {len(manifest['points'])} points -> {mpath}")
     log(f"aggregate with: python harness/summarize.py {args.results}")
+    failed = [p for p in manifest["points"] if p["status"] == "failed"]
+    if failed or manifest.get("aborted"):
+        log(f"{len(failed)} point(s) failed; see bench.log")
+        sys.exit(2)
 
 
 if __name__ == "__main__":

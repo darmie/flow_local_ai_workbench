@@ -144,7 +144,8 @@ running; they would measure each other.
 |---|---|
 | `machine is not quiet` | Show the user `top_procs` from `results/<run>/hostload_quiet.json` and ask them to close those apps. Retry. Use `--force` only if they approve, and say so in the report. |
 | Server exits during start-up | Read `results/<run>/server.log`. **Out of memory:** record "does not fit" for this model × platform and move on. **Unsupported quantisation or backend:** record it and file a git-bug issue (`area:configs`). |
-| Points marked `failed`, or "saturated at c=N" | Expected at high concurrency. It is data, so no action is needed. |
+| "saturated at c=N" | Expected at high concurrency. It is data, so no action is needed. |
+| Point `FAILED` (suite exits 2) or `PARTIAL` | Read the bench command's output in `bench.log`. Rejected requests (context too long, bad request) or a crashed server are problems to report; errors at high concurrency only are saturation data. |
 | `harness_dirty: true` in the manifest | Commit or stash changes, then re-run. |
 | On battery warning | Ask the user to plug in, then re-run. |
 | Harness bug (traceback, wrong columns) | Stop. File a git-bug issue (`bug area:harness`) with the command and traceback. Do not patch the harness mid-measurement. |

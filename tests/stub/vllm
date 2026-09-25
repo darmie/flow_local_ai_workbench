@@ -42,7 +42,15 @@ def bench(argv):
     get = lambda k, d=None: argv[argv.index(k) + 1] if k in argv else d
     conc = int(get("--max-concurrency", 1))
     n = int(get("--num-prompts", 10))
+    assert get("--tokenizer"), "harness must pass --tokenizer"
+    assert os.environ.get("HF_HUB_OFFLINE") == "1", "local client must run offline"
     out_len = int(get("--random-output-len", get("--prefix-repetition-output-len", 128)))
+    if os.environ.get("STUB_FAIL_DATASET") == get("--dataset-name"):
+        # Real vLLM exits 0 with completed=0 when every request is rejected.
+        os.makedirs(get("--result-dir"), exist_ok=True)
+        json.dump({"completed": 0, "failed": n, "request_throughput": 0.0, "output_throughput": 0.0},
+                  open(os.path.join(get("--result-dir"), get("--result-filename")), "w"))
+        return
     time.sleep(1.5)
     tpot = 20 * (1 + 0.3 * conc) * random.uniform(0.95, 1.05)
     ttft = 150 * conc * random.uniform(0.95, 1.05)

@@ -28,7 +28,6 @@ MANIFEST_KEYS = ["run_id", "machine_id", "tier", "model", "model_label", "quant"
 BENCH_KEYS = [
     "completed", "failed", "duration", "total_input_tokens", "total_output_tokens",
     "request_throughput", "output_throughput", "total_token_throughput", "request_goodput",
-    "max_concurrent_requests",
     "mean_ttft_ms", "median_ttft_ms", "p90_ttft_ms", "p95_ttft_ms", "p99_ttft_ms",
     "mean_tpot_ms", "median_tpot_ms", "p90_tpot_ms", "p95_tpot_ms", "p99_tpot_ms",
     "mean_itl_ms", "median_itl_ms", "p90_itl_ms", "p95_itl_ms", "p99_itl_ms",
