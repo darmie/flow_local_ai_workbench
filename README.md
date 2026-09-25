@@ -19,9 +19,8 @@ Halo, DGX Spark) and multi-GPU servers. Agentic workloads are evaluated through
 python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
 tests/smoke.sh                                   # validate the harness (stub vLLM, ~4 min)
 
-export BENCH_TIER=t2-entry BENCH_MACHINE_ID=<unique-id> BENCH_OPERATOR=<you>
-export BENCH_MACHINE_NAME="<make and model>" BENCH_RAM_DESC="<e.g. DDR5-5600 dual-channel>"
-hf download Qwen/Qwen3-8B-AWQ                    # once, online
+python harness/fingerprint.py                    # machine, tier and class are detected; check the "spec" block
+python harness/run_suite.py --model qwen3-8b-awq --platform cuda --print-download | sh   # once, online
 python harness/run_suite.py --model qwen3-8b-awq --platform cuda                 # quiet, GPU
 python harness/run_suite.py --model qwen3-8b-awq --platform cuda --conditions office
 python harness/run_suite.py --model qwen3-8b-awq --platform cpu                  # without GPU

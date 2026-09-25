@@ -10,7 +10,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "harness"))
 
 from summarize import _is_throttled  # noqa: E402
-from fingerprint import accelerator, machine_class, suggest_tier  # noqa: E402
+from fingerprint import accelerator, machine_class, suggest_tier, udev_memory  # noqa: E402
 from hostload import parse_typeperf_line  # noqa: E402
 from telemetry import parse_powermetrics  # noqa: E402
 
@@ -51,26 +51,32 @@ def _nv(name, mib):
 
 class TierTest(unittest.TestCase):
     def tier(self, fp):
-        return suggest_tier(*accelerator(fp))
+        return suggest_tier(*accelerator(fp), fp["cpu"]["model"])
 
     def test_discrete(self):
-        self.assertEqual(self.tier(_fp(gpus=[_nv("RTX 4060", 8188)])), "t2-entry")
-        self.assertEqual(self.tier(_fp(gpus=[_nv("RTX 5090", 32607)])), "t3-pro")
-        self.assertEqual(self.tier(_fp(gpus=[_nv("RTX 6000 Ada", 49140)])), "t4-workstation")
-        self.assertEqual(self.tier(_fp(gpus=[_nv("RTX 4090", 24564)] * 2)), "t5-multi-gpu")
+        self.assertEqual(self.tier(_fp(gpus=[_nv("RTX 4060", 8188)])), "t3-entry")
+        self.assertEqual(self.tier(_fp(gpus=[_nv("RTX 5090", 32607)])), "t4-pro")
+        self.assertEqual(self.tier(_fp(gpus=[_nv("RTX 6000 Ada", 49140)])), "t5-workstation")
+        self.assertEqual(self.tier(_fp(gpus=[_nv("RTX 4090", 24564)] * 2)), "t6-multi-gpu")
 
     def test_unified(self):
         mac = dict(arch="arm64", os_name="macOS-15.5-arm64-arm-64bit")
         self.assertEqual(self.tier(_fp(ram=8, **mac)), "t1-minimal")
-        self.assertEqual(self.tier(_fp(ram=24, **mac)), "t2-entry")
-        self.assertEqual(self.tier(_fp(ram=48, **mac)), "t3-pro")
-        self.assertEqual(self.tier(_fp(ram=128, **mac)), "t4-workstation")
-        self.assertEqual(self.tier(_fp(cpu="AMD RYZEN AI MAX+ 395", ram=124)), "t4-workstation")
+        self.assertEqual(self.tier(_fp(ram=16, **mac)), "t2-integrated")
+        self.assertEqual(self.tier(_fp(ram=24, **mac)), "t2-integrated")
+        self.assertEqual(self.tier(_fp(ram=48, **mac)), "t4-pro")
+        self.assertEqual(self.tier(_fp(ram=128, **mac)), "t5-workstation")
+        self.assertEqual(self.tier(_fp(cpu="AMD RYZEN AI MAX+ 395", ram=124)), "t5-workstation")
         self.assertEqual(self.tier(_fp(ram=119, gpus=[{"vendor": "nvidia", "name": "NVIDIA GB10", "memory": "[N/A]"}])),
-                         "t4-workstation")
+                         "t5-workstation")
 
-    def test_cpu_only(self):
+    def test_integrated(self):
         self.assertEqual(self.tier(_fp()), "t1-minimal")
+        self.assertEqual(self.tier(_fp(cpu="12th Gen Intel(R) Core(TM) i7-1255U", ram=16)), "t1-minimal")
+        self.assertEqual(self.tier(_fp(cpu="Intel(R) Core(TM) Ultra 7 258V", ram=32)), "t2-integrated")
+        self.assertEqual(self.tier(_fp(cpu="AMD Ryzen AI 9 HX 370 w/ Radeon 890M", ram=32)), "t2-integrated")
+        self.assertEqual(self.tier(_fp(cpu="Snapdragon(R) X Elite - X1E78100", arch="aarch64", ram=16)), "t2-integrated")
+        self.assertEqual(self.tier(_fp(cpu="Intel(R) Core(TM) Ultra 5 125U", ram=8)), "t1-minimal")
 
 
 class MachineClassTest(unittest.TestCase):
@@ -89,6 +95,19 @@ class MachineClassTest(unittest.TestCase):
         self.assertEqual(self.cls(_fp(cpu="AMD RYZEN AI MAX+ 395", ram=124), "desktop"), "uma-workstation")
         self.assertEqual(self.cls(_fp(arch="arm64", ram=36, os_name="macOS-15.5-arm64-arm-64bit"), "laptop"), "apple")
         self.assertEqual(self.cls(_fp(gpus=[_nv("NVIDIA L40S", 46068)] * 2), "server"), "server")
+
+
+class UdevMemoryTest(unittest.TestCase):
+    def test_two_ddr5_modules(self):
+        out = "\n".join(["MEMORY_ARRAY_ERROR_CORRECTION=None", "MEMORY_DEVICE_0_SIZE=17179869184",
+                         "MEMORY_DEVICE_0_MEMORY_TYPE=DDR5", "MEMORY_DEVICE_0_CONFIGURED_SPEED_MTS=5600",
+                         "MEMORY_DEVICE_1_SIZE=17179869184", "MEMORY_DEVICE_1_MEMORY_TYPE=DDR5",
+                         "MEMORY_DEVICE_1_CONFIGURED_SPEED_MTS=5600", "MEMORY_DEVICE_2_SIZE=0"])
+        d = udev_memory(out)
+        self.assertEqual((d["type"], d["speed_mts"], d["populated_slots"], d["ecc"]), (["DDR5"], ["5600"], 2, False))
+
+    def test_absent(self):
+        self.assertIsNone(udev_memory("ID_VENDOR=x"))
 
 
 class ThrottleTest(unittest.TestCase):

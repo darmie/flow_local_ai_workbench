@@ -8,6 +8,7 @@ import http.server
 import json
 import os
 import random
+import subprocess
 import sys
 import time
 
@@ -21,7 +22,8 @@ def serve(argv):
         def do_GET(self):
             # Counters grow with uptime so per-run deltas are non-zero.
             n = int(time.time() - t0)
-            metrics = (f"vllm:num_requests_running 0\nvllm:kv_cache_usage_perc 0.1\n"
+            metrics = (f"process_start_time_seconds {t0}\n"
+                       f"vllm:num_requests_running 0\nvllm:kv_cache_usage_perc 0.1\n"
                        f"vllm:request_success_total{{finished_reason=\"stop\"}} {n}\n"
                        f"vllm:e2e_request_latency_seconds_sum {0.8 * n}\n"
                        f"vllm:time_to_first_token_seconds_sum {0.1 * n}\n"
@@ -52,6 +54,16 @@ def bench(argv):
                   open(os.path.join(get("--result-dir"), get("--result-filename")), "w"))
         return
     time.sleep(1.5)
+    crash_at = os.environ.get("STUB_CRASH_CONC")
+    marker = os.path.join(get("--result-dir"), ".stub_crashed")
+    if crash_at and int(crash_at) == conc and not os.path.exists(marker):
+        # Simulate the server dying mid-point (e.g. OOM): stop it, all requests fail.
+        open(marker, "w").close()
+        port = get("--base-url").rsplit(":", 1)[-1]
+        subprocess.run(["pkill", "-f", f"vllm serve --port {port}"])
+        json.dump({"completed": 0, "failed": n, "request_throughput": 0.0, "output_throughput": 0.0},
+                  open(os.path.join(get("--result-dir"), get("--result-filename")), "w"))
+        return
     in_tokens = 512
     if get("--dataset-name") == "custom":
         # Approximate prompt tokens from characters so languages differ like real fertility.

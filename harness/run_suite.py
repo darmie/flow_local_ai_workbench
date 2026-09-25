@@ -18,7 +18,6 @@ import argparse
 import datetime as dt
 import json
 import os
-import platform as pyplatform
 import re
 import shlex
 import shutil
@@ -30,6 +29,9 @@ import urllib.parse
 import urllib.request
 
 import yaml
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import oom  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -55,6 +57,22 @@ def http_ok(url, timeout=3):
 
 def py(script, *args, **kw):
     return subprocess.run([sys.executable, os.path.join(HERE, script), *args], **kw)
+
+
+class SuiteStop(Exception):
+    """Ends the suite early with a process exit code."""
+
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
+
+
+class StartupFailure(Exception):
+    """The server did not become healthy; `info` holds the oom.classify() result."""
+
+    def __init__(self, info):
+        super().__init__(f"{info['category']}: {info['evidence']}")
+        self.info = info
 
 
 class Server:
@@ -99,7 +117,7 @@ class Server:
                          f"and pass --base-url")
             log(f"using external server at {self.base_url}")
             if not http_ok(self.base_url + "/health"):
-                sys.exit(f"{self.base_url}/health is not responding")
+                raise StartupFailure({"category": "unreachable", "evidence": f"{self.base_url}/health not responding"})
             return 0.0
         env = []
         for k, v in self.plat.get("env", {}).items():
@@ -113,37 +131,95 @@ class Server:
                      "-v", f"{self.args.hf_cache}:/root/.cache/huggingface"]
                     + env + self.plat.get("docker_args", []) + [self.plat["image"]] + self.serve_args())
         log("starting server: " + shlex.join(self.cmd))
-        t0 = time.time()
+        self.t_start = t0 = time.time()
+        self._dumped = None
         subprocess.run(self.cmd, check=True, stdout=subprocess.DEVNULL)
         while time.time() - t0 < self.args.startup_timeout:
             if http_ok(self.base_url + "/health"):
                 startup = time.time() - t0
                 log(f"server ready in {startup:.0f}s")
                 return startup
-            if not self.alive():
-                self.dump_logs()
-                sys.exit(f"server exited during startup; see {self.run_dir}/server.log")
+            if not self._running():
+                info = self.diagnose()
+                self.stop()
+                raise StartupFailure(info)
             time.sleep(3)
-        self.dump_logs()
+        info = self.diagnose()
         self.stop()
-        sys.exit("server did not become ready before --startup-timeout")
+        raise StartupFailure({"category": "startup_timeout", "evidence": info["evidence"]})
 
-    def alive(self):
-        if not self.managed:
-            return http_ok(self.base_url + "/health")
+    def _running(self):
         out = subprocess.run(["docker", "inspect", "-f", "{{.State.Running}}", self.name],
                              capture_output=True, text=True).stdout.strip()
         return out == "true"
 
-    def dump_logs(self):
+    def alive(self):
+        """Process up and /health answering. A running container whose engine
+        died still fails /health, so both are checked (with retries: /health
+        can be slow while the server is saturated)."""
+        if self.managed and not self._running():
+            return False
+        for _ in range(3):
+            if http_ok(self.base_url + "/health", timeout=10):
+                return True
+            time.sleep(5)
+        return False
+
+    def identity(self):
+        """Server process start time from /metrics; changes when the server restarts."""
+        try:
+            text = urllib.request.urlopen(self.base_url + "/metrics", timeout=5).read().decode()
+        except OSError:
+            return None
+        m = re.search(r"^process_start_time_seconds\s+([\d.eE+]+)", text, re.M)
+        return float(m.group(1)) if m else None
+
+    def remember_identity(self):
+        self.ident = self.identity()
+
+    def restarted(self):
+        """True if the server was replaced since remember_identity() (a crash that a
+        supervisor or container runtime already recovered from)."""
+        now = self.identity()
+        return getattr(self, "ident", None) is not None and now is not None and now != self.ident
+
+    def diagnose(self):
+        """Why the server is down: log patterns, container OOM kill, kernel OOM killer."""
+        text, oom_killed, exit_code = "", False, None
         if self.managed:
-            with open(os.path.join(self.run_dir, "server.log"), "w") as f:
-                subprocess.run(["docker", "logs", self.name], stdout=f, stderr=subprocess.STDOUT)
+            text = self.dump_logs()
+            state = subprocess.run(["docker", "inspect", "-f", "{{.State.OOMKilled}} {{.State.ExitCode}}", self.name],
+                                   capture_output=True, text=True).stdout.split()
+            if len(state) == 2:
+                oom_killed, exit_code = state[0] == "true", int(state[1])
+        elif self.args.server_log and os.path.exists(self.args.server_log):
+            text = open(self.args.server_log, errors="replace").read()
+        since = time.time() - getattr(self, "t_start", time.time() - 3600) + 60
+        return oom.classify(text, oom_killed, exit_code, oom.kernel_oom_lines(since))
+
+    def restart(self):
+        """Replace a dead managed server; returns start-up seconds."""
+        self.stop()
+        return self.start()
+
+    def dump_logs(self):
+        """Append this container's log to server.log (once per incarnation); returns the log text."""
+        if not self.managed or getattr(self, "_dumped", None) is not None:
+            return getattr(self, "_dumped", "") or ""
+        text = subprocess.run(["docker", "logs", self.name], capture_output=True, text=True, errors="replace")
+        text = text.stdout + text.stderr
+        with open(os.path.join(self.run_dir, "server.log"), "a") as f:
+            f.write(f"\n===== {self.name} until {dt.datetime.now():%H:%M:%S} =====\n{text}")
+        self._dumped = text
+        return text
 
     def stop(self):
-        if self.managed:
+        if self.managed and self._exists():
             self.dump_logs()
             subprocess.run(["docker", "rm", "-f", self.name], capture_output=True)
+
+    def _exists(self):
+        return subprocess.run(["docker", "inspect", self.name], capture_output=True).returncode == 0
 
 
 def snapshot_dir(hf_cache, repo, revision):
@@ -344,7 +420,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--model", required=True, choices=models)
     ap.add_argument("--platform", required=True, choices=plats["platforms"])
-    ap.add_argument("--tier", default=os.environ.get("BENCH_TIER"), choices=tiers)
+    ap.add_argument("--tier", default=os.environ.get("BENCH_TIER"), choices=tiers,
+                    help="default: the fingerprint's suggested tier")
     ap.add_argument("--profile", default="baseline", choices=profiles)
     ap.add_argument("--scenarios", default=",".join(scenarios_cfg["default_scenarios"]))
     ap.add_argument("--conditions", default="quiet", help="comma list of quiet,office,heavy")
@@ -367,6 +444,12 @@ def main():
     ap.add_argument("--force", action="store_true", help="proceed even if the quiet check fails")
     ap.add_argument("--cooldown", type=int, default=10)
     ap.add_argument("--startup-timeout", type=int, default=1800)
+    ap.add_argument("--max-restarts", type=int, default=2,
+                    help="restart a crashed server this many times per run before aborting")
+    ap.add_argument("--server-log", default="",
+                    help="log file of an external server, read to classify crashes (OOM etc.)")
+    ap.add_argument("--external-recovery-timeout", type=int, default=180,
+                    help="seconds to wait for an external server to come back after a crash")
     ap.add_argument("--results", default=os.path.join(ROOT, "results"))
     ap.add_argument("--notes", default="")
     ap.add_argument("--print-serve-args", action="store_true",
@@ -376,8 +459,19 @@ def main():
     ap.add_argument("--serve-only", action="store_true",
                     help="start the server with this config and keep it up until Ctrl-C (for Garden runs)")
     args = ap.parse_args()
+
+    probe = Probe(args.probe) if args.probe else None
+    if probe and not args.base_url:
+        sys.exit("--probe needs --base-url: start the server on the machine under test with --serve-only")
+    # fingerprint always describes the machine under test (via the probe in LAN mode).
+    fp_raw = (probe.call("GET", "/fingerprint", raw=True).decode() if probe else
+              py("fingerprint.py", capture_output=True, text=True, check=True).stdout)
+    fp = json.loads(fp_raw)
     if not args.tier:
-        sys.exit("set --tier or BENCH_TIER (see configs/tiers.yaml)")
+        args.tier = fp["spec"]["suggested_tier"]
+        if not (args.print_serve_args or args.print_download):
+            log(f"tier {args.tier} (suggested by the fingerprint; set --tier or BENCH_TIER to override)")
+    fp["tier"] = args.tier
 
     tier, plat, model = tiers[args.tier], plats["platforms"][args.platform], dict(models[args.model])
     if plat.get("model_field"):
@@ -400,7 +494,7 @@ def main():
         for repo in filter(None, [model, model.get("speculator") if profile.get("needs_speculator") else None]):
             print(shlex.join(["hf", "download", repo["hf"]] + (["--revision", repo["revision"]] if repo.get("revision") else [])))
         return
-    args.client_image = plat.get("image", "vllm/vllm-openai-cpu:v0.30.0-x86_64")
+    args.client_image = plat.get("image", "vllm/vllm-openai-cpu:v0.30.0")
     if plat.get("launch") == "external" and args.client == "docker":
         args.client_image = plats["platforms"]["cpu"]["image"]
 
@@ -408,7 +502,7 @@ def main():
         print(shlex.join(Server(args, plat, model, profile, tier, None).serve_args()))
         return
 
-    machine = os.environ.get("BENCH_MACHINE_ID", pyplatform.node())
+    machine = fp["machine_id"]
     constraint = "".join([f"_off{args.cpu_offload_gb:g}" if args.cpu_offload_gb else "",
                           f"_pl{args.gpu_power_limit}" if args.gpu_power_limit else ""])
     run_id = f"{dt.datetime.now():%Y%m%d-%H%M%S}_{machine}_{args.model}_{args.platform}_{args.profile}{constraint}"
@@ -419,18 +513,10 @@ def main():
     log(f"run dir: {run_dir}")
 
     env = dict(os.environ, BENCH_TIER=args.tier, VLLM_IMAGE=plat.get("image", ""))
-    probe = Probe(args.probe) if args.probe else None
-    if probe and not args.base_url:
-        sys.exit("--probe needs --base-url: start the server on the machine under test with --serve-only")
+    json.dump(fp, open(os.path.join(run_dir, "fingerprint.json"), "w"), indent=2, default=str)
     if probe:
-        # fingerprint.json always describes the machine under test.
-        open(os.path.join(run_dir, "fingerprint.json"), "wb").write(probe.call("GET", "/fingerprint", raw=True))
         with open(os.path.join(run_dir, "client_fingerprint.json"), "w") as f:
             py("fingerprint.py", stdout=f, env=env, check=True)
-    else:
-        with open(os.path.join(run_dir, "fingerprint.json"), "w") as f:
-            py("fingerprint.py", stdout=f, env=env, check=True)
-    fp = json.load(open(os.path.join(run_dir, "fingerprint.json")))
 
     conditions = [c.strip() for c in args.conditions.split(",") if c.strip()]
     cond = RemoteCondition(args, run_dir, probe) if probe else Condition(args, run_dir)
@@ -449,8 +535,8 @@ def main():
         "power_source": fp["spec"].get("power", ""), "machine_class": fp["spec"].get("machine_class", ""),
         "max_model_len": args.max_model_len, "repeats": args.repeats,
         "client": "lan" if probe else args.client, "probe": args.probe or None,
-        "stress_ng": bool(shutil.which("stress-ng")), "operator": os.environ.get("BENCH_OPERATOR", ""),
-        "notes": args.notes, "conditions": {}, "points": [],
+        "stress_ng": bool(shutil.which("stress-ng")), "operator": fp.get("operator", ""),
+        "notes": args.notes, "conditions": {}, "points": [], "crashes": [],
     }
     mpath = os.path.join(run_dir, "manifest.json")
 
@@ -461,8 +547,49 @@ def main():
     server = Server(args, plat, model, profile, tier, run_dir)
     manifest["serve_cmd"] = server.cmd
     telemetry = None
+    exit_code = 0
+
+    def recover(where):
+        """Classify a dead server, restart it (managed) or wait for it (external),
+        and record the crash with its recovery time. Raises SuiteStop when it cannot recover."""
+        was_restarted = server.alive() and server.restarted()
+        info = server.diagnose()
+        crash = {"t_detected": time.time(), **where, **info, "recovered": False}
+        if was_restarted:
+            crash["restarted_externally_at"] = server.identity()
+        manifest["crashes"].append(crash)
+        log(f"  server down: {info['category']}: {info['evidence']}")
+        if len(manifest["crashes"]) > args.max_restarts:
+            save()
+            raise SuiteStop(2, f"server crashed {len(manifest['crashes'])} times; last: {info['category']}")
+        t0 = time.time()
+        if server.managed:
+            try:
+                crash["restart_startup_s"] = round(server.restart(), 1)
+            except StartupFailure as f:
+                crash["restart_failure"] = f.info
+                save()
+                raise SuiteStop(2, f"restart failed: {f.info['category']}")
+        else:
+            while time.time() - t0 < args.external_recovery_timeout and not http_ok(server.base_url + "/health"):
+                time.sleep(5)
+            if not http_ok(server.base_url + "/health"):
+                save()
+                raise SuiteStop(2, f"external server did not come back ({info['category']})")
+        crash["recovered"], crash["recovery_s"] = True, round(time.time() - t0, 1)
+        server.remember_identity()
+        log(f"  server recovered in {crash['recovery_s']}s")
+        save()
+        return crash
+
     try:
-        manifest["startup_s"] = round(server.start(), 1)
+        try:
+            manifest["startup_s"] = round(server.start(), 1)
+            server.remember_identity()
+        except StartupFailure as f:
+            manifest["startup_failure"] = f.info
+            log(f"server did not start: {f.info['category']}: {f.info['evidence']}")
+            raise SuiteStop(3, f"server did not start ({f.info['category']})")
         manifest["serve_cmd"] = server.cmd
         if not server.managed:
             # An external server's real context limit decides which scenarios fit.
@@ -477,7 +604,9 @@ def main():
             log(f"serving {args.model} at {server.base_url}/v1 (Ctrl-C to stop)")
             while server.alive():
                 time.sleep(5)
-            raise RuntimeError("server exited")
+            info = server.diagnose()
+            manifest["crashes"].append({"t_detected": time.time(), "phase": "serve_only", **info, "recovered": False})
+            raise SuiteStop(2, f"server exited: {info['category']}: {info['evidence']}")
         try:
             open(os.path.join(run_dir, "metrics_ready.txt"), "w").write(
                 urllib.request.urlopen(server.base_url + "/metrics", timeout=5).read().decode())
@@ -525,8 +654,9 @@ def main():
                         for conc in sweep:
                             if any(k[:2] == (target, sname) and k[2] <= conc for k in saturated):
                                 continue
-                            if not server.alive():
-                                raise RuntimeError("server died")
+                            where = {"condition": target, "scenario": sname, "concurrency": conc, "repeat": rep}
+                            if not server.alive() or server.restarted():
+                                recover({**where, "phase": "before_point"})
                             n = max(tier["min_prompts"], conc * tier["prompts_per_slot"])
                             fname = f"{target}_{sname}_c{conc}_r{rep}.json"
                             meta = {"run_id": run_id, "condition": target, "scenario": sname, "repeat": rep}
@@ -541,6 +671,10 @@ def main():
                                                     ).returncode
                             t1 = time.time()
                             status, reason = point_status(rc, os.path.join(run_dir, fname))
+                            if not server.alive() or server.restarted():
+                                # The server died during this point: the point failed because of the crash.
+                                crash = recover({**where, "phase": "during_point"})
+                                status, reason = "failed", f"server crashed: {crash['category']}"
                             manifest["points"].append({
                                 "condition": target, "scenario": sname, "concurrency": conc, "repeat": rep,
                                 "num_prompts": n, "t_start": t0, "t_end": t1, "exit_code": rc,
@@ -558,9 +692,10 @@ def main():
                     cond.exit()
     except KeyboardInterrupt:
         log("interrupted; saving partial results")
-    except RuntimeError as e:
-        log(f"aborting: {e}")
+    except SuiteStop as e:
+        log(f"stopping: {e}")
         manifest["aborted"] = str(e)
+        exit_code = e.code
     finally:
         if telemetry == "probe":
             probe.call("POST", "/telemetry/stop")
@@ -576,9 +711,13 @@ def main():
     log(f"done: {len(manifest['points'])} points -> {mpath}")
     log(f"aggregate with: python harness/summarize.py {args.results}")
     failed = [p for p in manifest["points"] if p["status"] == "failed"]
-    if failed or manifest.get("aborted"):
-        log(f"{len(failed)} point(s) failed; see bench.log")
-        sys.exit(2)
+    if manifest["crashes"]:
+        log(f"{len(manifest['crashes'])} server crash(es): "
+            + ", ".join(f"{c['category']} ({'recovered in %ss' % c['recovery_s'] if c['recovered'] else 'not recovered'})"
+                        for c in manifest["crashes"]))
+    if exit_code or failed:
+        log(f"{len(failed)} point(s) failed; see bench.log and server.log")
+        sys.exit(exit_code or 2)
 
 
 if __name__ == "__main__":
