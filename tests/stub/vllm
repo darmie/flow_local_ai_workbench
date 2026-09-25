@@ -1,0 +1,59 @@
+#!/usr/bin/env python3
+"""Stub of the `vllm` CLI for harness smoke tests.
+
+`vllm serve` -> tiny HTTP server with /health, /metrics, /v1/models.
+`vllm bench serve` -> writes a result JSON with the keys summarize.py reads.
+"""
+import http.server
+import json
+import os
+import random
+import sys
+import time
+
+
+def serve(argv):
+    port = int(argv[argv.index("--port") + 1]) if "--port" in argv else 8000
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = {"/health": b"", "/v1/models": b'{"data":[{"id":"stub"}]}',
+                    "/metrics": b"vllm:num_requests_running 0\nvllm:kv_cache_usage_perc 0.1\n"}.get(self.path)
+            self.send_response(200 if body is not None else 404)
+            self.end_headers()
+            self.wfile.write(body or b"")
+
+        def log_message(self, *a):
+            pass
+
+    http.server.ThreadingHTTPServer(("127.0.0.1", port), H).serve_forever()
+
+
+def bench(argv):
+    get = lambda k, d=None: argv[argv.index(k) + 1] if k in argv else d
+    conc = int(get("--max-concurrency", 1))
+    n = int(get("--num-prompts", 10))
+    out_len = int(get("--random-output-len", get("--prefix-repetition-output-len", 128)))
+    time.sleep(1.5)
+    tpot = 20 * (1 + 0.3 * conc) * random.uniform(0.95, 1.05)
+    ttft = 150 * conc * random.uniform(0.95, 1.05)
+    dur = n / conc * (ttft + tpot * out_len) / 1000
+    res = {"completed": n, "failed": 0, "duration": dur, "total_input_tokens": n * 512,
+           "total_output_tokens": n * out_len, "request_throughput": n / dur,
+           "request_goodput": n / dur * (1.0 if tpot < 150 and ttft < 2000 else 0.2),
+           "output_throughput": n * out_len / dur, "max_concurrent_requests": conc}
+    for m, base in (("ttft", ttft), ("tpot", tpot), ("itl", tpot), ("e2el", ttft + tpot * out_len)):
+        res[f"mean_{m}_ms"] = res[f"median_{m}_ms"] = base
+        for p in (50, 90, 95, 99):
+            res[f"p{p}_{m}_ms"] = base * (1 + p / 200)
+    os.makedirs(get("--result-dir"), exist_ok=True)
+    json.dump(res, open(os.path.join(get("--result-dir"), get("--result-filename")), "w"))
+
+
+if __name__ == "__main__":
+    if sys.argv[1:2] == ["serve"]:
+        serve(sys.argv[2:])
+    elif sys.argv[1:3] == ["bench", "serve"]:
+        bench(sys.argv[3:])
+    else:
+        sys.exit(f"stub vllm: unsupported {sys.argv[1:]}")

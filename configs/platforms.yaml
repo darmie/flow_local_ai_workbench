@@ -1,0 +1,50 @@
+# How to launch vLLM on each backend. `launch: docker` is started and stopped by
+# run_suite.py; `launch: external` means the operator starts the server by hand
+# (see docs/METHODOLOGY.md §4) and run_suite.py only benchmarks it.
+#
+# Image tags are pinned: every machine in a comparison must use the same tag.
+
+vllm_version: "0.30.0"
+
+platforms:
+  cuda:
+    mode: gpu
+    launch: docker
+    image: vllm/vllm-openai:v0.30.0
+    docker_args: ["--gpus", "all", "--ipc=host"]
+    serve_args: ["--gpu-memory-utilization", "0.90"]
+
+  cpu:
+    # x86-64 only (AVX512 preferred, AVX2 works with reduced features).
+    # Also the "without GPU" arm on GPU machines: same model, GPU hidden.
+    mode: cpu
+    launch: docker
+    image: vllm/vllm-openai-cpu:v0.30.0-x86_64
+    docker_args: ["--cap-add", "SYS_NICE", "--security-opt", "seccomp=unconfined",
+                  "--shm-size", "4g", "-e", "CUDA_VISIBLE_DEVICES="]
+    env:
+      VLLM_CPU_OMP_THREADS_BIND: auto
+      # GiB reserved for KV cache; set per tier in tiers.yaml (cpu_kv_cache_gib).
+      VLLM_CPU_KVCACHE_SPACE: "{cpu_kv_cache_gib}"
+    serve_args: ["--dtype", "bfloat16"]
+
+  rocm:
+    # Includes Strix Halo (gfx1151, ROCm >= 7.0.2 on the host).
+    mode: gpu
+    launch: docker
+    image: vllm/vllm-openai-rocm:v0.30.0
+    docker_args: ["--device", "/dev/kfd", "--device", "/dev/dri", "--group-add", "video",
+                  "--ipc=host", "--security-opt", "seccomp=unconfined"]
+    serve_args: ["--gpu-memory-utilization", "0.90"]
+
+  openvino:
+    # Intel CPU or Iris Xe iGPU via the vllm-openvino plugin, which tracks an older
+    # vLLM than the pinned version above; record its commit in the run notes.
+    # VLLM_OPENVINO_DEVICE=CPU|GPU selects the device.
+    mode: igpu
+    launch: external
+
+  metal:
+    # Apple Silicon GPU via the vllm-metal plugin (MLX). Uses mlx-community checkpoints.
+    mode: gpu
+    launch: external

@@ -1,0 +1,48 @@
+# Synthetic serving workloads, each mapped to an SMB use case. All use
+# `vllm bench serve` against /v1/completions with fixed lengths (range ratio 0)
+# and --ignore-eos, so every machine processes exactly the same token counts.
+#
+# slo: per-request thresholds passed to --goodput. A request "meets SLO" only
+# if every listed metric is under its limit. Capacity (max users) is derived
+# from these; see docs/METHODOLOGY.md §6.
+
+scenarios:
+  chat:
+    use_case: "Interactive assistant turn"
+    dataset: random
+    input_len: 512
+    output_len: 256
+    slo: {ttft: 2000, tpot: 150}
+
+  rag:
+    use_case: "Question over retrieved documents (prefill-heavy)"
+    dataset: random
+    input_len: 3072
+    output_len: 256
+    slo: {ttft: 5000, tpot: 150}
+
+  generate:
+    use_case: "Drafting a long answer/report (decode-heavy)"
+    dataset: random
+    input_len: 128
+    output_len: 1024
+    slo: {ttft: 2000, tpot: 150}
+
+  agent-prefix:
+    use_case: "Agent steps sharing a long system prompt + tool schemas"
+    dataset: prefix_repetition
+    prefix_len: 2048
+    suffix_len: 256
+    num_prefixes: 4
+    output_len: 128
+    slo: {ttft: 3000, tpot: 150}
+
+  longctx:
+    use_case: "Long document analysis; skipped when max_model_len < 16384"
+    dataset: random
+    input_len: 12288
+    output_len: 256
+    min_model_len: 16384
+    slo: {ttft: 15000, tpot: 200}
+
+default_scenarios: [chat, rag, generate, agent-prefix]

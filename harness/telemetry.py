@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """1 Hz host + accelerator + vLLM telemetry sampler.
 
+CPU and memory are split into harness (vLLM server, bench client, harness
+scripts) and background (everything else) so each point can be labelled with
+the host condition it actually ran under.
+
 Writes one CSV row per second until SIGINT/SIGTERM. Every source is optional:
 a missing tool (nvidia-smi, rocm-smi, RAPL) leaves its columns empty instead
 of failing the run.
@@ -22,9 +26,12 @@ import urllib.request
 
 import psutil
 
+from hostload import BackgroundSampler
+
 FIELDS = [
-    "ts", "cpu_util_pct", "cpu_freq_mhz", "load1", "mem_used_gb", "mem_avail_gb",
-    "swap_used_gb", "cpu_temp_c", "cpu_pkg_power_w",
+    "ts", "cpu_util_pct", "bg_cpu_pct", "harness_cpu_pct", "cpu_freq_mhz", "load1",
+    "mem_used_gb", "mem_avail_gb", "bg_mem_used_gb", "harness_rss_gb",
+    "swap_used_gb", "swap_in_mb_s", "cpu_temp_c", "cpu_pkg_power_w",
     "gpu_util_pct", "gpu_mem_used_gb", "gpu_mem_total_gb", "gpu_power_w",
     "gpu_temp_c", "gpu_sm_clock_mhz", "gpu_throttle_reasons",
     "vllm_running", "vllm_waiting", "vllm_kv_cache_usage", "vllm_preemptions_total",
@@ -185,7 +192,7 @@ def main():
 
     rapl = Rapl()
     rapl.watts()
-    psutil.cpu_percent(None)
+    bg = BackgroundSampler()
     with open(args.out, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=FIELDS)
         w.writeheader()
@@ -193,9 +200,15 @@ def main():
             t0 = time.monotonic()
             vm, sw = psutil.virtual_memory(), psutil.swap_memory()
             freq = psutil.cpu_freq()
+            b = bg.sample()
             row = {
                 "ts": round(time.time(), 3),
-                "cpu_util_pct": psutil.cpu_percent(None),
+                "cpu_util_pct": b["total_cpu_pct"],
+                "bg_cpu_pct": b["bg_cpu_pct"],
+                "harness_cpu_pct": b["harness_cpu_pct"],
+                "bg_mem_used_gb": b["bg_mem_used_gb"],
+                "harness_rss_gb": b["harness_rss_gb"],
+                "swap_in_mb_s": b["swap_in_mb_s"],
                 "cpu_freq_mhz": round(freq.current) if freq else "",
                 "load1": round(os.getloadavg()[0], 2),
                 "mem_used_gb": round((vm.total - vm.available) / 2**30, 3),

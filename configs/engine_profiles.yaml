@@ -1,0 +1,28 @@
+# Engine configurations. `baseline` is the reference every machine runs first;
+# the others are Phase 4 optimisations compared against it on the same machine.
+# Prefix caching is disabled in baseline so repeats never reuse KV from earlier
+# prompts; agent-prefix then shows the cost of not caching.
+
+profiles:
+  baseline:
+    serve_args: ["--no-enable-prefix-caching", "--performance-mode", "balanced", "--seed", "0"]
+
+  prefix-cache:
+    serve_args: ["--enable-prefix-caching", "--performance-mode", "balanced", "--seed", "0"]
+
+  fp8-kv:
+    # GPU only (Ada/Hopper/ROCm).
+    serve_args: ["--enable-prefix-caching", "--kv-cache-dtype", "fp8", "--seed", "0"]
+
+  interactive:
+    serve_args: ["--enable-prefix-caching", "--performance-mode", "interactivity", "--seed", "0"]
+
+  spec-ngram:
+    # Draft-free speculative decoding; model-specific EAGLE/MTP configs are added per model.
+    serve_args: ["--enable-prefix-caching", "--seed", "0",
+                 "--speculative-config", '{"method": "ngram", "num_speculative_tokens": 4, "prompt_lookup_max": 4}']
+
+  agentic:
+    # Used for Garden runs: tool calling on, prefix caching on (agents resend long prefixes).
+    serve_args: ["--enable-prefix-caching", "--enable-auto-tool-choice", "--seed", "0"]
+    needs_tool_parser: true

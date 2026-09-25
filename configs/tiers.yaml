@@ -1,0 +1,40 @@
+# Hardware tiers from the research roadmap. The tier sets the concurrency sweep
+# and the prompt budget so a full suite finishes in a working day on that class
+# of machine. Declare your tier with BENCH_TIER or --tier.
+
+tiers:
+  t1-minimal:
+    description: "Office laptop/desktop, CPU + iGPU, 16 GB shared RAM (e.g. Alder Lake + Iris Xe)"
+    concurrency: [1, 2, 4]
+    loaded_concurrency: [1, 2]
+    min_prompts: 6
+    prompts_per_slot: 3
+    max_model_len: 8192
+    cpu_kv_cache_gib: 2
+
+  t2-entry-dgpu:
+    description: "Discrete GPU with 8-16 GB VRAM (RTX 4060 / 4070 / 4070 Ti)"
+    concurrency: [1, 2, 4, 8, 16]
+    loaded_concurrency: [1, 4]
+    min_prompts: 16
+    prompts_per_slot: 4
+    max_model_len: 16384
+    cpu_kv_cache_gib: 4
+
+  t3-pro:
+    description: "24 GB dGPU (RTX 4090) or UMA 48-128 GB (Apple M-series Pro/Max, Strix Halo)"
+    concurrency: [1, 2, 4, 8, 16, 32]
+    loaded_concurrency: [1, 8]
+    min_prompts: 32
+    prompts_per_slot: 4
+    max_model_len: 32768
+    cpu_kv_cache_gib: 8
+
+  t4-multi-gpu:
+    description: "Multi-GPU server (e.g. 2x RTX 4090, PCIe or NVLink)"
+    concurrency: [1, 2, 4, 8, 16, 32, 64]
+    loaded_concurrency: [1, 16]
+    min_prompts: 64
+    prompts_per_slot: 4
+    max_model_len: 32768
+    cpu_kv_cache_gib: 16

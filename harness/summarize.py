@@ -14,9 +14,16 @@ import json
 import os
 import statistics
 
-MANIFEST_KEYS = ["run_id", "machine_id", "tier", "model", "model_label", "quant", "mode",
-                 "condition", "engine_profile", "vllm_version", "vllm_image", "harness_commit",
-                 "quiet_verified"]
+import yaml
+
+from hostload import classify
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+CONDITIONS = yaml.safe_load(open(os.path.join(HERE, "..", "configs", "conditions.yaml")))
+
+MANIFEST_KEYS = ["run_id", "machine_id", "tier", "model", "model_label", "quant", "params_b",
+                 "platform", "mode", "engine_profile", "max_model_len", "vllm_version", "vllm_image",
+                 "harness_commit", "harness_dirty", "startup_s", "stress_ng"]
 # Keys pulled from vLLM's result JSON if present (other numeric keys are ignored).
 BENCH_KEYS = [
     "completed", "failed", "duration", "total_input_tokens", "total_output_tokens",
@@ -65,7 +72,13 @@ def window_stats(rows, t0, t1):
             c += [0.0] * (n - len(c))
             watts = [a + b for a, b in zip(g, c)]
     throttled = [r.get("gpu_throttle_reasons", "") for r in rows]
+    bg_cpu, swap_in = col("bg_cpu_pct"), col("swap_in_mb_s")
+    measured = classify(statistics.median(bg_cpu), None, statistics.median(swap_in) if swap_in else 0,
+                        CONDITIONS["classes"]) if bg_cpu else ""
     return {
+        "median_bg_cpu_pct": round(statistics.median(bg_cpu), 2) if bg_cpu else "",
+        "median_bg_mem_used_gb": agg("bg_mem_used_gb", statistics.median),
+        "measured_condition": measured,
         "tel_samples": len(rows),
         "peak_mem_used_gb": agg("mem_used_gb", max),
         "peak_gpu_mem_used_gb": agg("gpu_mem_used_gb", max),
@@ -117,11 +130,20 @@ def main():
                     continue
                 res = json.load(open(res_path))
                 row = {k: manifest.get(k, "") for k in MANIFEST_KEYS}
-                row.update({"scenario": point["scenario"], "concurrency": point["concurrency"],
-                            "request_rate": point.get("request_rate", "inf"),
-                            "repeat": point["repeat"], "point_status": point.get("status", "")})
+                row.update({"target_condition": point["condition"], "scenario": point["scenario"],
+                            "concurrency": point["concurrency"], "repeat": point["repeat"],
+                            "num_prompts": point.get("num_prompts"),
+                            "point_status": point.get("status", "")})
                 row.update({k: res.get(k, "") for k in BENCH_KEYS})
                 row.update(window_stats(tel, point["t_start"], point["t_end"]))
+                order = list(CONDITIONS["classes"])
+                target_cls = CONDITIONS["targets"][point["condition"]]["class"]
+                row["condition_match"] = (row["measured_condition"] == target_cls
+                                          if row["measured_condition"] else "")
+                row["condition_heavier"] = (bool(row["measured_condition"]) and
+                                            order.index(row["measured_condition"]) > order.index(target_cls))
+                if row["request_throughput"]:
+                    row["goodput_ratio"] = round((row["request_goodput"] or 0) / row["request_throughput"], 3)
                 if row["energy_wh"] and row["total_output_tokens"]:
                     row["wh_per_1k_output_tokens"] = round(
                         row["energy_wh"] / row["total_output_tokens"] * 1000, 4)

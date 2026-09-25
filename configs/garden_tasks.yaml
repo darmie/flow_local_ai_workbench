@@ -1,0 +1,133 @@
+# Agentic task set for Garden issue runs. Each task becomes one issue assigned
+# to the benchmark agent. Success = run status `succeeded` AND every `expect`
+# check passes. Checks are deterministic (regex over the run result + work
+# products, tools used, step budget) so every machine scores the same way.
+#
+# Prompts forbid clarifying questions: `ask_question` parks the run in
+# waiting_for_input, which the harness scores as a failure.
+#
+# `requires` lists Garden features beyond offline mode; such tasks run only
+# when passed via --with (e.g. --with sandbox).
+
+preamble: >-
+  This is an automated benchmark task. Do not ask clarifying questions; make
+  reasonable assumptions and state them. Finish by creating exactly one work
+  product.
+
+tasks:
+  - id: plan-rollout
+    category: planning
+    prompt: |
+      Our 12-person accounting firm in Lagos wants to move invoice drafting to a
+      local AI model on one office desktop. Produce a step-by-step rollout plan
+      (type: plan) with numbered steps covering hardware check, model install,
+      staff training, backup power, and a two-week pilot with a success measure.
+    expect:
+      tools_used: [create_work_product]
+      regex: ["1\\.", "pilot", "(UPS|inverter|backup power)", "training"]
+      max_steps: 12
+
+  - id: extract-invoice
+    category: extraction
+    prompt: |
+      Extract the fields below from this invoice and return them as a JSON object
+      in a report work product with keys vendor, invoice_number, date, currency,
+      total, line_items (array of {description, qty, amount}).
+
+      ---
+      KANO AGRO SUPPLIES LTD — TAX INVOICE
+      Invoice No: INV-2291        Date: 14 March 2026
+      Bill to: Sahel Fresh Foods, Plot 7 Bompai Industrial Estate, Kano
+      1. Drip irrigation kit (1 ha)      qty 3    NGN 612,000
+      2. Hybrid maize seed, 25 kg bag    qty 20   NGN 440,000
+      3. Delivery and installation       qty 1    NGN 150,000
+      Subtotal NGN 1,202,000   VAT 7.5% NGN 90,150   TOTAL NGN 1,292,150
+      ---
+    expect:
+      tools_used: [create_work_product]
+      regex: ["INV-2291", "Kano Agro", "1,?292,?150", "NGN", "2026-03-14|14 March 2026"]
+      max_steps: 6
+
+  - id: summarize-policy
+    category: long-context
+    prompt: |
+      Summarise the leave policy below for staff in at most five bullet points
+      (report work product). Keep every number exact.
+
+      ---
+      ANNUAL LEAVE. Full-time staff accrue 1.75 days of paid annual leave per
+      completed month of service, to a maximum of 21 days per calendar year.
+      Up to 5 unused days may be carried into the first quarter of the next year;
+      carried days not used by 31 March lapse. Leave requests of 3 days or more
+      must be submitted 10 working days in advance through the HR portal.
+      SICK LEAVE. Staff receive 12 days of paid sick leave per year. Absences of
+      more than 2 consecutive days require a medical certificate from a
+      registered practitioner. Sick leave does not carry over.
+      PARENTAL LEAVE. Birth mothers receive 16 weeks of fully paid maternity
+      leave; the other parent receives 10 working days of paid paternity leave,
+      to be taken within 8 weeks of the birth. Adoptive parents receive the same
+      entitlements from the date of placement.
+      COMPASSIONATE LEAVE. Up to 5 paid days on the death of an immediate family
+      member, and 2 paid days for an extended family member.
+      PUBLIC HOLIDAYS. Staff required to work on a public holiday receive double
+      pay or a day off in lieu, at the employee's choice, taken within 30 days.
+      ---
+    expect:
+      tools_used: [create_work_product]
+      regex: ["21 days", "1\\.75", "16 weeks", "10 (working )?days", "12 days"]
+      max_steps: 6
+
+  - id: decompose-project
+    category: multi-step
+    prompt: |
+      Decompose this project into three to five child issues, each with a clear
+      title and a one-paragraph description: "Set up an offline customer-support
+      assistant for a Nairobi electronics shop: collect FAQs, pick a model that
+      runs on an RTX 4060, write the system prompt, test with 20 real questions,
+      and train two staff members." Then create a checklist work product that
+      lists the child issues in order.
+    expect:
+      tools_used: [create_child_issue, create_work_product]
+      regex: ["FAQ", "(system prompt)", "(test|evaluat)"]
+      max_steps: 16
+
+  - id: swahili-reply
+    category: multilingual
+    prompt: |
+      A customer wrote in Swahili. Draft a polite reply in Swahili that confirms
+      the order will be delivered on Friday and that delivery is free, then add
+      an English translation. Put both in a report work product.
+
+      Ujumbe wa mteja: "Habari, niliagiza friji ya lita 200 wiki iliyopita (oda
+      namba 4471). Je, itafika lini na nitalipia usafiri kiasi gani?"
+    expect:
+      tools_used: [create_work_product]
+      regex: ["4471", "Ijumaa", "(bure|bila malipo)", "Friday", "free"]
+      max_steps: 6
+
+  - id: yoruba-classify
+    category: multilingual
+    prompt: |
+      Classify each of these Yoruba customer messages as COMPLAINT, QUESTION or
+      PRAISE and give a one-line English gloss for each, as a table in a report
+      work product.
+      1. "Ẹ ṣé o, ọjà yín dára gan-an."
+      2. "Ìgbà wo ni ẹ máa ṣí ṣọ́ọ̀bù ní ọjọ́ Àìkú?"
+      3. "Wọ́n fi ọjà tí ó bàjẹ́ ránṣẹ́ sí mi, mo fẹ́ kí ẹ dá owó mi padà."
+    expect:
+      tools_used: [create_work_product]
+      regex: ["PRAISE", "QUESTION", "COMPLAINT"]
+      max_steps: 6
+
+  - id: sandbox-sales-xlsx
+    category: tool-use
+    requires: [sandbox]
+    prompt: |
+      Using the sandbox, compute monthly totals and the month-over-month growth
+      rate for these sales (NGN): Jan 1,200,000; Feb 1,380,000; Mar 1,242,000;
+      Apr 1,490,400. Produce an XLSX file with the table and a report work
+      product stating the month with the highest growth.
+    expect:
+      tools_used: [create_work_product]
+      regex: ["Apr", "20(\\.0)?%", "15(\\.0)?%"]
+      max_steps: 20

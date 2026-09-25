@@ -1,0 +1,48 @@
+# Host conditions. Everything is measured as BACKGROUND load: whole-machine
+# usage minus the vLLM server, the benchmark client and the harness itself.
+#
+# A run requests a target condition. Before it starts, hostload.py measures the
+# machine as the user left it:
+#   - already inside the target band  -> run as-is ("organic")
+#   - below the band (loaded targets) -> top up with synthetic load to the band
+#                                        floor ("topped-up"), unless --no-topup
+#   - above the band                  -> quiet: refuse; loaded: run and record
+#                                        the heavier measured class
+# During the run the telemetry keeps measuring background load; summarize.py
+# labels each point with the class it actually ran under.
+
+sample_window_s: 30
+
+classes:
+  # Ordered from lightest to heaviest; a point's class is the first one whose
+  # upper bounds its median background load fits under.
+  quiet:
+    bg_cpu_pct_max: 5       # % of total CPU capacity
+    bg_gpu_util_pct_max: 5
+    swap_in_mb_s_max: 0.1
+  light:
+    bg_cpu_pct_max: 15
+    bg_gpu_util_pct_max: 20
+    swap_in_mb_s_max: 1
+  office:
+    bg_cpu_pct_max: 40
+    bg_gpu_util_pct_max: 40
+    swap_in_mb_s_max: 5
+  heavy:
+    bg_cpu_pct_max: 100
+    bg_gpu_util_pct_max: 100
+    swap_in_mb_s_max: 1.0e9
+
+targets:
+  quiet:
+    class: quiet
+  office:
+    class: office
+    # Top-up floor: background CPU and RAM the machine must be carrying.
+    bg_cpu_pct_min: 15
+    bg_mem_frac_min: 0.35
+  heavy:
+    class: heavy
+    bg_cpu_pct_min: 40
+    bg_mem_frac_min: 0.50
+    mem_bandwidth_hog: true
