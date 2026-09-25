@@ -25,6 +25,8 @@ MANIFEST_KEYS = ["run_id", "machine_id", "tier", "model", "model_label", "quant"
                  "platform", "mode", "engine_profile", "max_model_len", "vllm_version", "vllm_image",
                  "harness_commit", "harness_dirty", "startup_s", "stress_ng",
                  "machine_class", "power_source", "cpu_offload_gb", "gpu_power_limit_w"]
+FAILURE_KEYS = ["run_id", "machine_id", "tier", "machine_class", "model", "platform", "engine_profile",
+                "power_source", "cpu_offload_gb", "gpu_power_limit_w"]
 # Keys pulled from vLLM's result JSON if present (other numeric keys are ignored).
 BENCH_KEYS = [
     "completed", "failed", "duration", "total_input_tokens", "total_output_tokens",
@@ -114,6 +116,7 @@ def window_stats(rows, t0, t1):
         "peak_power_w": round(max(watts), 2) if watts else "",
         "energy_wh": round(sum(watts) / 3600, 4) if watts else "",  # 1 Hz samples
         "gpu_throttled": any(_is_throttled(t) for t in throttled),
+        "preemptions": int(delta("vllm_preemptions_total")) if delta("vllm_preemptions_total") is not None else "",
         "spec_acceptance_rate": round(accepted / draft_tok, 3) if draft_tok and accepted is not None else "",
         "spec_mean_accepted_len": round(1 + accepted / drafts, 2) if drafts and accepted is not None else "",
     }
@@ -139,12 +142,18 @@ def main():
     ap.add_argument("-o", "--out", default="results/summary.csv")
     args = ap.parse_args()
 
-    out_rows = []
+    out_rows, failures = [], []
     for root in args.roots:
         for manifest_path in sorted(glob.glob(os.path.join(root, "**", "manifest.json"), recursive=True)):
             run_dir = os.path.dirname(manifest_path)
             manifest = json.load(open(manifest_path))
             tel = load_telemetry(os.path.join(run_dir, "telemetry.csv"))
+            base = {k: manifest.get(k, "") for k in FAILURE_KEYS}
+            if manifest.get("startup_failure"):
+                failures.append({**base, "phase": "startup", **manifest["startup_failure"], "recovered": False})
+            for c in manifest.get("crashes", []):
+                failures.append({**base, **{k: c.get(k, "") for k in ("phase", "condition", "scenario", "concurrency",
+                                 "repeat", "category", "evidence", "recovered", "recovery_s")}})
             spec = load_spec(run_dir)
             for point in manifest.get("points", []):
                 res_path = os.path.join(run_dir, point["result_file"])
@@ -174,6 +183,15 @@ def main():
                         row["energy_wh"] / row["total_output_tokens"] * 1000, 4)
                 out_rows.append(row)
 
+    fpath = os.path.join(os.path.dirname(os.path.abspath(args.out)), "failures.csv")
+    if failures:
+        with open(fpath, "w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=list(dict.fromkeys(k for r in failures for k in r)))
+            w.writeheader()
+            w.writerows(failures)
+        print(f"wrote {len(failures)} server failures -> {fpath}")
+    elif os.path.exists(fpath):
+        os.remove(fpath)
     if not out_rows:
         print("no results found")
         return

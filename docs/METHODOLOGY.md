@@ -351,7 +351,11 @@ server is stopped and the top-up is removed.
    length (read from `/v1/models` for external servers), and stops sweeping a
    scenario once it saturates: the point is not `ok`, or fewer than 25% of its
    requests meet the SLO. Higher concurrency would only fail slower.
-8. Writes `manifest.json`: every point with timestamps, the exact
+8. Watches for server failures (§5.5): out-of-memory and other crashes are
+   classified, the point that was running is marked failed with the reason,
+   the server is restarted (or, if external, waited for) and the suite
+   continues with the next workload.
+9. Writes `manifest.json`: every point with timestamps, the exact
    server/bench commands, condition plans and their verification.
 
 ### 5.4 Tokenization premium (Phase 2)
@@ -382,7 +386,35 @@ python harness/run_suite.py --model inkubalm-0.4b --platform cpu --scenarios flo
 - The FLORES+ terms forbid re-hosting the text where crawlers can reach it.
   `datasets/` is git-ignored; never commit or upload the built prompts.
 
-### 5.5 Running the benchmark client elsewhere
+### 5.5 Out-of-memory detection and recovery
+
+Running out of memory is an expected outcome on constrained machines, so the
+harness detects it, labels it and keeps going.
+
+| When | How it is detected | Category |
+|---|---|---|
+| Model or context does not fit at start-up | Server exits before `/health` answers; its log is matched against known messages | `kv_cache_insufficient` (weights load, no room for the context), `gpu_oom` (CUDA / HIP / XPU / Metal out of memory) |
+| OS kills the server for lack of RAM | Container `OOMKilled` / exit code 137, or a kernel OOM-killer line naming the vLLM process (`journalctl -k` / `dmesg`) | `host_oom` |
+| Server dies or restarts mid-run | `/health` stops answering, or `process_start_time_seconds` in `/metrics` changes (a supervisor already restarted it) | as above, else `crashed` |
+| Memory pressure without a crash | KV-cache usage reaches 100% and vLLM pre-empts requests (`vllm:num_preemptions_total` rises); swap use | `flag_preempted`, `flag_swapped` in the report |
+
+Recovery:
+
+- **Start-up failure:** the run is recorded as *did not start* with its
+  category and evidence (`startup_failure` in the manifest) and the suite exits
+  with status 3. "Does not fit" is a result, not an error to work around.
+- **Mid-run crash:** the running point becomes `failed` with reason
+  `server crashed: <category>`, higher concurrency for that workload is
+  skipped, and the server is restarted (`--max-restarts`, default 2 per run).
+  Each crash records its category, evidence, and `recovery_s` (time from
+  detection until the server is healthy again). External servers are waited
+  for up to `--external-recovery-timeout`; pass `--server-log` so their crashes
+  can be classified.
+- **Reporting:** `summarize.py` writes `failures.csv` (start-up failures and
+  crashes with category and recovery time); `report.py --md` prints it as a
+  **Server failures** table.
+
+### 5.6 Running the benchmark client elsewhere
 
 On tier-1 machines the benchmark client competes with the model for CPU. The
 client's CPU is counted as harness load (§3.1), not background. For final
@@ -535,7 +567,7 @@ results/<YYYYmmdd-HHMMSS>_<machine>_<model>_<platform>_<profile>/
 |---|---|
 | Thermal throttling on laptops over a long sweep | Repeats in the outer loop; cooldown between points; temperature, clock and throttle telemetry; `flag_unstable` |
 | Prefix-cache reuse across repeats inflating results | Prefix caching off in `baseline`; different seed per repeat |
-| Benchmark client stealing CPU on small machines | Client CPU counted as harness load; LAN-client option (§5.5) |
+| Benchmark client stealing CPU on small machines | Client CPU counted as harness load; LAN-client option (§5.6) |
 | KV cache silently too small on CPU (`VLLM_CPU_KVCACHE_SPACE`) | Set explicitly per tier; `metrics_ready.txt` records block counts; preemptions tracked |
 | Swapping on 16 GB machines | Swap telemetry; `flag_swapped`; memory top-up floor |
 | GPU→CPU offload cliff (model > VRAM) | Measured deliberately in Phase 3 with `--extra-serve-args "--cpu-offload-gb N"`; never mixed into baseline |

@@ -124,6 +124,9 @@ def main():
             "condition_match_rate": round(sum(match) / len(match), 2) if match else None,
             "flag_throttled": any(p.get("gpu_throttled") == "True" for p in all_pts),
             "flag_swapped": any((f(p.get("peak_swap_used_gb")) or 0) > 0.1 for p in all_pts),
+            # KV cache ran out and vLLM paused requests: a memory limit reached without a crash.
+            "flag_preempted": any((f(p.get("preemptions")) or 0) > 0 for p in all_pts),
+            "max_kv_cache_usage": max((f(p.get("max_kv_cache_usage")) or 0 for p in all_pts), default=None),
         })
 
     if not out:
@@ -161,6 +164,15 @@ def main():
         print("|" + "---|" * len(mcols))
         for m in machines.values():
             print("| " + " | ".join(str(m.get(c, "")) for c in mcols) + " |")
+        fpath = os.path.join(os.path.dirname(os.path.abspath(args.summary)), "failures.csv")
+        if os.path.exists(fpath):
+            fcols = ["machine_id", "model", "platform", "phase", "scenario", "concurrency", "category",
+                     "recovered", "recovery_s", "evidence"]
+            print("\n## Server failures\n")
+            print("| " + " | ".join(fcols) + " |")
+            print("|" + "---|" * len(fcols))
+            for r in csv.DictReader(open(fpath)):
+                print("| " + " | ".join(str(r.get(c, "")).replace("|", "/") for c in fcols) + " |")
         print("\n## Results\n")
         cols = ["machine_id", "machine_name", "model", "platform", "target_condition", "scenario", "c1_ttft_p50_ms",
                 "c1_tpot_p50_ms", "c1_output_tok_s", "capacity_users", "peak_output_tok_s",

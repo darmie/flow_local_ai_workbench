@@ -147,7 +147,8 @@ running; they would measure each other.
 | Symptom | What to do |
 |---|---|
 | `machine is not quiet` | Show the user `top_procs` from `results/<run>/hostload_quiet.json` and ask them to close those apps. Retry. Use `--force` only if they approve, and say so in the report. |
-| Server exits during start-up | Read `results/<run>/server.log`. **Out of memory:** record "does not fit" for this model × platform and move on. **Unsupported quantisation or backend:** record it and file a git-bug issue (`area:configs`). |
+| `server did not start` (suite exits 3) | The manifest's `startup_failure.category` says why. `gpu_oom`, `kv_cache_insufficient` or `host_oom`: record "does not fit" for this model × platform and move on. `crashed` with an unsupported quantisation or backend in `server.log`: record it and file a git-bug issue (`area:configs`). |
+| `server down: <category>` mid-run | The harness restarts it and continues; the crash, its category and recovery time go in the report's Failures section. Repeated crashes stop the suite (exit 2). |
 | "saturated at c=N" | Expected at high concurrency. It is data, so no action is needed. |
 | Point `FAILED` (suite exits 2) or `PARTIAL` | Read the bench command's output in `bench.log`. Rejected requests (context too long, bad request) or a crashed server are problems to report; errors at high concurrency only are saturation data. |
 | `harness_dirty: true` in the manifest | Commit or stash changes, then re-run. |
@@ -212,7 +213,7 @@ Same model: quiet vs office/heavy (measured class), change in TTFT p90 / TPOT p5
 Wh per 1k output tokens at capacity, peak power, and power_source (wall, or GPU+CPU lower bound).
 
 ## Failures and flags
-Models that did not fit; failed or saturated points; unstable, throttled or swapped results; condition mismatches.
+Models that did not fit (start-up failure category); server crashes with category and recovery time (the Server failures table); failed or saturated points; unstable, throttled, swapped or pre-empted results; condition mismatches.
 
 ## Raw data
 Paths of every run directory used.
